@@ -1,0 +1,9 @@
+[submodule "submodules/optilb"]
+	path = submodules/optilb
+	url = https://github.com/buresjan/optilb
+[submodule "submodules/lb2dgeom"]
+	path = submodules/lb2dgeom
+	url = https://github.com/buresjan/lb2dgeom
+[submodule "submodules/tnl-lbm"]
+	path = submodules/tnl-lbm
+	url = https://github.com/buresjan/tnl-lbm
