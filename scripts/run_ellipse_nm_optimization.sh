@@ -9,8 +9,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="${SLURM_SUBMIT_DIR:-$(pwd)}"
 cd "$REPO_ROOT"
 
-python3 scripts/ellipse_nm_optimization.py "$@"
+python3 "$REPO_ROOT/scripts/ellipse_nm_optimization.py" "$@"
