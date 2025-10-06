@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=ell-nm
-#SBATCH --time=02:00:00
+#SBATCH --time=4-23:59:59
+#SBATCH --mail-user=buresjan@protonmail.com
 #SBATCH --partition=gp
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
