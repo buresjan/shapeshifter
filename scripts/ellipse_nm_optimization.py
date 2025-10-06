@@ -44,7 +44,7 @@ LBM_RESULT_TIMEOUT: Optional[float] = None
 INITIAL_ANGLE = 60.0
 MAX_ITER = 20
 MAX_EVALS: Optional[int] = None
-TOL = 1e-4
+TOL = 1e-3
 SEED: Optional[int] = None
 
 
@@ -124,9 +124,20 @@ class LBMSimulationObjective:
 
     def _run_simulation(self, geometry_name: str, angle_deg: float) -> float:
         """Submit the staged geometry to Slurm and return the scalar objective."""
-        from run_lbm_simulation import submit_and_collect
+        from datetime import UTC, datetime
 
-        result = submit_and_collect(
+        from run_lbm_simulation import (
+            COMPLETED_STATES,
+            SimulationResult,
+            prepare_submission,
+            submit_prepared,
+            update_manifest,
+            wait_for_job_completion,
+            wait_for_result_file,
+            read_result_file,
+        )
+
+        submission = prepare_submission(
             geometry=geometry_name,
             resolution=self.resolution,
             partition=LBM_PARTITION,
@@ -137,15 +148,92 @@ class LBMSimulationObjective:
             runs_root=self.runs_root,
             job_name=None,
             type1_bouzidi=self.type1_bouzidi,
-            poll_interval=LBM_POLL_INTERVAL,
-            timeout=LBM_JOB_TIMEOUT,
-            result_timeout=LBM_RESULT_TIMEOUT,
+        )
+        submission = submit_prepared(submission)
+
+        try:
+            final_state = wait_for_job_completion(
+                submission.job_id,  # type: ignore[arg-type]
+                poll_interval=LBM_POLL_INTERVAL,
+                timeout=LBM_JOB_TIMEOUT,
+            )
+        except TimeoutError as exc:  # pragma: no cover - propagated to caller
+            raise RuntimeError(
+                f"Job {submission.job_id} timed out while waiting for completion.",
+            ) from exc
+
+        finished_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        update_manifest(
+            submission.run_dir,
+            {
+                "final_state": final_state,
+                "finished_at": finished_at,
+            },
+        )
+
+        if final_state in COMPLETED_STATES:
+            wait_for_result_file(
+                submission.result_path,
+                poll_interval=5.0,
+                timeout=LBM_RESULT_TIMEOUT,
+            )
+            raw, numeric_value = read_result_file(submission.result_path)
+        else:
+            raw, numeric_value = self._recover_result_from_failure(
+                submission,
+                final_state,
+            )
+
+        update_manifest(submission.run_dir, {"result_value": raw})
+
+        result = SimulationResult(
+            job_id=submission.job_id or "",
+            run_id=submission.run_id,
+            run_dir=submission.run_dir,
+            result_path=submission.result_path,
+            raw_value=raw,
+            numeric_value=numeric_value,
+            state=final_state,
+            finished_at=finished_at,
         )
         if result.numeric_value is None:
             raise RuntimeError("LBM runner did not return a numeric objective value")
         value = float(result.numeric_value)
         print(f"angle={angle_deg:.4f} deg -> objective={value:.6f}", flush=True)
         return value
+
+    def _recover_result_from_failure(self, submission, final_state: str) -> tuple[str, Optional[float]]:
+        """Attempt to recover the objective value when the job ended in FAILURE."""
+        from run_lbm_simulation import read_result_file, update_manifest, wait_for_result_file
+
+        recovery_path = submission.run_dir / "sim_2D" / "values" / f"value_{submission.staged_geometry.name}"
+        try:
+            wait_for_result_file(
+                recovery_path,
+                poll_interval=5.0,
+                timeout=LBM_RESULT_TIMEOUT,
+            )
+        except TimeoutError as exc:  # pragma: no cover - escalate downstream
+            raise RuntimeError(
+                f"Job {submission.job_id} ended with state {final_state} and no recoverable value.",
+            ) from exc
+
+        raw, numeric_value = read_result_file(recovery_path)
+        try:
+            if not submission.result_path.exists():
+                shutil.copy2(recovery_path, submission.result_path)
+        except Exception as err:  # pragma: no cover - best effort copy
+            print(
+                f"Warning: could not stage recovered value for job {submission.job_id}: {err}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+        print(
+            f"Recovered value from failed job {submission.job_id} (state={final_state})", flush=True
+        )
+        update_manifest(submission.run_dir, {"recovered_from_state": final_state})
+        return raw, numeric_value
 
 
 def build_geometry_config(semi_major: float, semi_minor: float) -> GeometryConfig:
