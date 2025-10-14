@@ -265,7 +265,7 @@ def main() -> int:
         max_evals=MAX_EVALS,
         tol=TOL,
         seed=SEED,
-        parallel=True,  # Change to False to disable
+        parallel=False,
     )
 
     print(f"Target Cassini area A = {TARGET_AREA:.3f} grid units²")
