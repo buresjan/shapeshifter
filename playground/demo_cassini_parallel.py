@@ -63,7 +63,7 @@ TOL = 1e-3
 SEED: int | None = None
 
 # Set to None to let ProcessPool decide, or a small number to limit concurrency
-N_WORKERS: int | None = 2
+N_WORKERS: int | None = 4
 
 AREA_TOLERANCE = 5.0  # Acceptable difference (in grid units) when enforcing constant area.
 
