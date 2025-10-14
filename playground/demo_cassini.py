@@ -37,7 +37,7 @@ INITIAL_A = 66.0         # Default semi-axis parameter a for the Cassini oval.
 INITIAL_C = 62.0         # Only used to measure the target area once.
 
 LBM_RESOLUTION = 8       # Grid resolution used by both geometry and solver.
-LBM_TYPE1_BOUZIDI = "auto"
+LBM_TYPE1_BOUZIDI = "off"
 LBM_RUNS_ROOT = "cassini_runs"
 LBM_PARTITION = "gp"
 LBM_WALLTIME = "10:00:00"
