@@ -96,15 +96,20 @@ TARGET_AREA = rasterised_area(INITIAL_A, INITIAL_C)
 # --------------------------------------------------------------------------- #
 # Helper routines.
 # --------------------------------------------------------------------------- #
-def solve_for_c(a_value: float, target_area: float) -> float:
-    """Return the value of ``c`` that keeps the Cassini area constant for a given ``a``."""
+def solve_for_c(a_value: float, target_area: float, *, angle_rad: float = 0.0) -> float:
+    """Return the value of ``c`` that keeps the Cassini area constant for a given ``a``.
+
+    Note: The rasterised area depends on the orientation due to grid discretisation.
+    We therefore solve for ``c`` at the actual rotation angle used for the geometry
+    to minimise area drift at build time.
+    """
     # The area decreases as ``c`` grows, so bisection is enough once we bracket the root.
     # Start with a modest interval around the reference ``INITIAL_C`` and expand on demand.
     c_low = 1.0
     c_high = max(INITIAL_C + 20.0, a_value + 40.0)
 
     def area_minus_target(cand: float) -> float:
-        return rasterised_area(a_value, cand) - target_area
+        return rasterised_area(a_value, cand, angle_rad=angle_rad) - target_area
 
     low_value = area_minus_target(c_low)
     while low_value < 0.0:
@@ -152,7 +157,8 @@ def make_geometry_builder(
         eval_counter += 1
 
         angle_rad = math.radians(angle_deg)
-        c_value = solve_for_c(a_value, TARGET_AREA)
+        # Solve for c at the given rotation to compensate rasterisation aliasing.
+        c_value = solve_for_c(a_value, TARGET_AREA, angle_rad=angle_rad)
         cassini = CassiniOval(
             x0=CASSINI_CENTER[0],
             y0=CASSINI_CENTER[1],
@@ -275,7 +281,7 @@ def main() -> int:
 
     best_angle = float(result.best_x[0])
     best_a = float(result.best_x[1])
-    best_c = solve_for_c(best_a, TARGET_AREA)
+    best_c = solve_for_c(best_a, TARGET_AREA, angle_rad=math.radians(best_angle))
     best_value = -float(result.best_f)
 
     print(f"Best angle (deg): {best_angle:.6f}")
