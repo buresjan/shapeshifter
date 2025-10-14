@@ -3,6 +3,12 @@
 # Usage (local):   ./playground/demo_cassini.sh
 # Usage (Slurm):   sbatch playground/demo_cassini.sh
 
+#SBATCH --job-name=opt-cass
+#SBATCH --time=48:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=4G
+#SBATCH --output=cass-%j.out
+
 set -euo pipefail
 
 if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
