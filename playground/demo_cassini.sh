@@ -1,6 +1,5 @@
 #!/bin/bash
 # Launcher for the Cassini optimisation script.
-# Usage (local):   ./playground/demo_cassini.sh
 # Usage (Slurm):   sbatch playground/demo_cassini.sh
 
 #SBATCH --job-name=opt-cass
