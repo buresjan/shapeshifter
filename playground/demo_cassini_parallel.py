@@ -38,8 +38,11 @@ from lb2dgeom.shapes.cassini_oval import CassiniOval
 # User-facing configuration knobs (edit these as needed).
 # --------------------------------------------------------------------------- #
 TNL_LBM_ROOT = Path(__file__).resolve().parents[1] / "submodules" / "tnl-lbm"
-LBM_SOLVER_BINARY = Path("sim_2D/sim2d_3")
 GEOMETRY_WORKDIR = Path(__file__).resolve().parent / "lbm_geometry_work"
+LBM_EXECUTOR = os.environ.get("LBM_EXECUTOR", "slurm").lower()
+if LBM_EXECUTOR not in {"slurm", "local"}:
+    raise ValueError("LBM_EXECUTOR must be 'slurm' or 'local'.")
+LBM_SIMULATION_TARGET = "sim2d_3"
 
 INITIAL_ANGLE_DEG = 0.0  # Start with no rotation; the optimiser explores 0–180°.
 INITIAL_A = 66.0         # Default semi-axis parameter a for the Cassini oval.
@@ -220,7 +223,8 @@ def run_simulation(geometry_name: str, *, tnllbm_root: Path) -> float:
         poll_interval=LBM_POLL_INTERVAL,
         timeout=LBM_JOB_TIMEOUT,
         result_timeout=LBM_RESULT_TIMEOUT,
-        solver_binary=LBM_SOLVER_BINARY,
+        executor=LBM_EXECUTOR,
+        simulation_target=LBM_SIMULATION_TARGET,
     )
     if result.numeric_value is None:
         raise RuntimeError("LBM run completed without a numeric objective value.")
@@ -264,6 +268,7 @@ def main() -> int:
     space = build_design_space()
 
     start_point = [INITIAL_ANGLE_DEG, INITIAL_A]
+    optimizer_opts: dict[str, object] = {"parallel_poll_points": True, "n_workers": N_WORKERS}
     problem = OptimizationProblem(
         objective=objective,
         space=space,
@@ -275,7 +280,7 @@ def main() -> int:
         tol=TOL,
         seed=SEED,
         parallel=True,
-        optimizer_options={"n_workers": N_WORKERS},
+        optimizer_options=optimizer_opts,
     )
 
     print(f"Target Cassini area A = {TARGET_AREA:.3f} grid units²")
