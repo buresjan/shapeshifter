@@ -1,6 +1,7 @@
 #!/bin/bash
 # Launcher for the Cassini optimisation script.
 # Usage (Slurm):   sbatch playground/demo_cassini.sh
+# Usage (local):   ./playground/demo_cassini.sh --local
 
 #SBATCH --job-name=opt-cass
 #SBATCH --time=48:00:00
@@ -9,6 +10,13 @@
 #SBATCH --output=cass-%j.out
 
 set -euo pipefail
+
+EXECUTOR="slurm"
+if [[ "${1:-}" == "--local" ]]; then
+    EXECUTOR="local"
+    shift
+fi
+export LBM_EXECUTOR="${EXECUTOR}"
 
 if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
     # Slurm copies this script into /var/spool, so we jump back to the original repository.
@@ -22,4 +30,5 @@ else
     cd "${SCRIPT_DIR}/.."
 fi
 
-python3 "${SCRIPT_PATH}"
+echo "Launching Cassini optimisation via ${EXECUTOR} executor"
+python3 "${SCRIPT_PATH}" "$@"

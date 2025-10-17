@@ -5,6 +5,7 @@ Nelder–Mead optimalizace pro Cassiniho ovál.
 
 from __future__ import annotations
 
+import os
 import math
 import shutil
 import sys
@@ -24,8 +25,11 @@ from lb2dgeom.shapes.cassini_oval import CassiniOval
 # Konfigurace (dle potřeby nutno upravit)
 # --------------------------------------------------------------------------- #
 TNL_LBM_ROOT = Path(__file__).resolve().parents[1] / "submodules" / "tnl-lbm"  # root submodulu s LBMkem a pomocnými skripty
-LBM_SOLVER_BINARY = Path("sim_2D/sim2d_3")  # cesta k binárce solveru (tady se používá sim2d_3, který není dobrý - nutno definovat vlastní)
 GEOMETRY_WORKDIR = Path(__file__).resolve().parent / "lbm_geometry_work"  # lokální složka kam se ukládají generované geoemtrie
+LBM_EXECUTOR = os.environ.get("LBM_EXECUTOR", "slurm").lower()  # 'slurm' nebo 'local'; nastavitelné přes proměnnou prostředí
+if LBM_EXECUTOR not in {"slurm", "local"}:
+    raise ValueError("LBM_EXECUTOR must be 'slurm' or 'local'.")
+LBM_SIMULATION_TARGET = "sim2d_3"  # název binárky, který spouští skript sim_2D/run
 
 INITIAL_ANGLE_DEG = 0.0  # počáteční rotace (stupně); optimalizace prozkoumává rozsah 0–180°.
 INITIAL_A = 66.0  # počáteční parametr parametru Cassiniho oválu
@@ -34,7 +38,7 @@ INITIAL_C = 62.0  # použito pouze jednorázově k určení plochy po rasterizac
 LBM_RESOLUTION = 8 # POZOR!!! musí korespondovat s nastavením solveru i geometrie, momentálně se to musí na hard codit
 LBM_TYPE1_BOUZIDI = "off"  # chci/nechci Bouzidiho - on/off; předává se runneru
 LBM_RUNS_ROOT = "cassini_runs"  # adresář kam se ukládají informace o jednotlivých simulacích, žije v tnl-lbm
-LBM_PARTITION = "gp" 
+LBM_PARTITION = "gp"
 LBM_WALLTIME = "10:00:00"  # Limit walltime pro job s jedním LBMkem
 LBM_GPUS = 1  # funguje pouze pro =1 zatím
 LBM_CPUS = 4  # počet CPU, to dává smysl měnit hlavně pokud chci paralelní simulaci, tímhle efektivně stanovím, kolik jich může běžet naráz
@@ -230,7 +234,7 @@ def make_lbm_objective(
         # - type1_bouzidi: přepínač Bouzidiho
         # - poll_interval: perioda dotazování stavu jobu (v sekundách)
         # - timeout/result_timeout: limity na job a čekání na výsledek (None = bez limitu).
-        # - solver_binary: cesta k binárce solveru, kterou má runner spouštět
+        # - executor/simulation_target: binárka pro runner
         result = submit_and_collect(
             geometry=geometry_name,
             resolution=int(LBM_RESOLUTION),
@@ -244,7 +248,8 @@ def make_lbm_objective(
             poll_interval=LBM_POLL_INTERVAL,
             timeout=LBM_JOB_TIMEOUT,
             result_timeout=LBM_RESULT_TIMEOUT,
-            solver_binary=LBM_SOLVER_BINARY,
+            executor=LBM_EXECUTOR,
+            simulation_target=LBM_SIMULATION_TARGET,
         )
         # Runner musí vrátit objekt s `numeric_value`. Pokud chybí, jde o chybu.
         if result.numeric_value is None:
