@@ -10,7 +10,7 @@ Flow: build geometry with lb2dgeom -> submit tnl-lbm via submodules/tnl-lbm
 runner -> parse scalar objective -> wrap with optilb.NelderMead (parallel=True).
 
 Assumptions:
-- submodules installed in the venv: pip install -e submodules/optilb -e submodules/lb2dgeom
+- submodules installed in the venv: pip install -e submodules/optilb -e submodules/lb2dgeom -e submodules/meshgen
 - submodules/tnl-lbm built separately; treated as a CLI tool via its Python helper.
 - sim_2D/sim2d_3 is the active solver binary (configured below).
 """

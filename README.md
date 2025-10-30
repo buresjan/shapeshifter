@@ -1,9 +1,10 @@
 # Shapeshifter
 
-Shapeshifter is a script-oriented playground for rapid experimentation with optimization-driven lattice Boltzmann method (LBM) simulations. The repository wires together three internal submodules:
+Shapeshifter is a script-oriented playground for rapid experimentation with optimization-driven lattice Boltzmann method (LBM) simulations. The repository wires together four internal submodules:
 
 - [`submodules/optilb/`](submodules/optilb/) – optimization problems and solvers used to drive geometry updates.
 - [`submodules/lb2dgeom/`](submodules/lb2dgeom/) – parametric 2D geometry generation utilities for LBM domains.
+- [`submodules/meshgen/`](submodules/meshgen/) – 3D geometry templating and voxelization pipelines for simulation-ready lattices.
 - [`submodules/tnl-lbm/`](submodules/tnl-lbm/) – C++/CUDA LBM solver that consumes generated geometry and reports objective values.
 
 The typical workflow is:
@@ -31,7 +32,7 @@ The typical workflow is:
    ```
 2. Install the local packages and any top-level requirements:
    ```bash
-   pip install -e submodules/optilb -e submodules/lb2dgeom
+   pip install -e submodules/optilb -e submodules/lb2dgeom -e submodules/meshgen
    pip install -r requirements.txt
    ```
 

@@ -7,3 +7,6 @@
 [submodule "submodules/tnl-lbm"]
 	path = submodules/tnl-lbm
 	url = https://github.com/buresjan/tnl-lbm
+[submodule "submodules/meshgen"]
+	path = submodules/meshgen
+	url = https://github.com/buresjan/meshgen
