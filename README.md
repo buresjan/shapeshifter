@@ -1,6 +1,6 @@
 # Shapeshifter
 
-Shapeshifter is a script-oriented playground for rapid experimentation with optimization-driven lattice Boltzmann method (LBM) simulations. The repository wires together four internal submodules:
+Shapeshifter is a script-oriented playground for rapid experimentation with optimization-driven lattice Boltzmann method (LBM) simulations. The repository wires together four internal submodules (the first three cover the default 2D workflow; `meshgen` extends it to 3D voxel pipelines):
 
 - [`submodules/optilb/`](submodules/optilb/) – optimization problems and solvers used to drive geometry updates.
 - [`submodules/lb2dgeom/`](submodules/lb2dgeom/) – parametric 2D geometry generation utilities for LBM domains.
@@ -32,9 +32,16 @@ The typical workflow is:
    ```
 2. Install the local packages and any top-level requirements:
    ```bash
-   pip install -e submodules/optilb -e submodules/lb2dgeom -e submodules/meshgen
+   pip install -e submodules/optilb -e submodules/lb2dgeom
    pip install -r requirements.txt
    ```
+   For 3D voxel/geometry tooling, install the optional `meshgen` package as well:
+   ```bash
+   pip install -e submodules/meshgen
+   ```
+   `meshgen` pulls in additional dependencies (`gmsh`, `trimesh`, `mayavi`, `tqdm`) and may require system packages:
+   - Ensure the Gmsh binary is available on your PATH (or install via your package manager).
+   - Mayavi relies on Qt/OpenGL; install matching system libraries (e.g., `qtbase5-dev`, `mesa`, vendor GPU drivers) before running the pip install.
 
 ## Keeping everything up to date
 
