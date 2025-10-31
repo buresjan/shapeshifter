@@ -25,6 +25,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -43,6 +44,36 @@ def default_paths(project_root: Path) -> Tuple[Path, Path]:
     binary = project_root / "submodules" / "tnl-lbm" / "build" / "sim_NSE" / "sim_tcpc"
     data_root = project_root / "submodules" / "tnl-lbm" / "sim_NSE"
     return binary, data_root
+
+
+def locate_solver_root(binary: Path) -> Path:
+    """Return the ``tnl-lbm`` repository root for ``binary``."""
+    for parent in binary.resolve().parents:
+        candidate = parent / "run_lbm_simulation.py"
+        if candidate.is_file():
+            return parent
+    raise ValueError(
+        f"Unable to locate tnl-lbm root from '{binary}'. Expected run_lbm_simulation.py nearby."
+    )
+
+
+def prepare_run_directory(project_root: Path, case_basename: str) -> Path:
+    """Create a dedicated folder for solver artefacts, mimicking run_lbm_simulation."""
+    runs_root = project_root / "tmp" / "junction_tcpc_runs"
+    runs_root.mkdir(parents=True, exist_ok=True)
+
+    stem = Path(case_basename).stem or "case"
+    sanitized = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in stem)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    candidate = runs_root / f"{sanitized}_{timestamp}"
+
+    suffix = 0
+    while candidate.exists():
+        suffix += 1
+        candidate = runs_root / f"{sanitized}_{timestamp}_{suffix:02d}"
+
+    candidate.mkdir(parents=True, exist_ok=False)
+    return candidate
 
 
 def generate_geometry(output_dir: Path, case_name: str | None, *, resolution: int, lower_angle: float,
@@ -103,22 +134,41 @@ def stage_geometry(files: Dict[str, Path], data_root: Path) -> Dict[str, Path]:
     return staged_paths
 
 
-def run_simulation(binary: Path, resolution: int, case_name: str, data_root: Path) -> subprocess.CompletedProcess:
-    """Execute the solver binary with the provided data root."""
+def run_simulation(
+    binary: Path,
+    resolution: int,
+    case_name: str,
+    data_root: Path,
+    run_dir: Path,
+    solver_root: Path,
+) -> Tuple[Path, Path]:
+    """Execute the solver binary while capturing logs on disk."""
     env = os.environ.copy()
     env["TNL_LBM_DATA_ROOT"] = str(data_root)
     command = [str(binary), str(resolution), case_name]
+    stdout_path = run_dir / "stdout.log"
+    stderr_path = run_dir / "stderr.log"
     print(f"[solver] Launching: {' '.join(command)}")
-    print(f"[solver] Working directory: {binary.parent}")
-    result = subprocess.run(
-        command,
-        cwd=binary.parent,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    return result
+    print(f"[solver] Working directory: {solver_root}")
+    print(f"[solver] stdout log: {stdout_path}")
+    print(f"[solver] stderr log: {stderr_path}")
+    with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
+        "w", encoding="utf-8"
+    ) as stderr_file:
+        result = subprocess.run(
+            command,
+            cwd=solver_root,
+            env=env,
+            text=True,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            check=False,
+        )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"sim_tcpc exited with {result.returncode}. Inspect logs under '{run_dir}'."
+        )
+    return stdout_path, stderr_path
 
 
 def collect_scalar(data_root: Path, case_name: str) -> Tuple[float, float, Path]:
@@ -264,22 +314,31 @@ def main(argv: list[str] | None = None) -> int:
 
     staged_paths = stage_geometry(generated_files, data_root)
     case_basename = Path(case_name).name
+    run_dir = prepare_run_directory(project_root, case_basename)
+    print(f"[run] Solver artefacts directory: {run_dir}")
 
-    result = run_simulation(binary, args.resolution, case_basename, data_root)
-    if result.returncode != 0:
-        print("[solver] stdout:")
-        print(result.stdout or "(empty)")
-        print("[solver] stderr:", file=sys.stderr)
-        print(result.stderr or "(empty)", file=sys.stderr)
-        print(f"error: sim_tcpc exited with {result.returncode}", file=sys.stderr)
-        return result.returncode
+    try:
+        solver_root = locate_solver_root(binary)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
-    if result.stdout:
-        print("[solver] stdout:")
-        print(result.stdout)
-    if result.stderr:
-        print("[solver] stderr:", file=sys.stderr)
-        print(result.stderr, file=sys.stderr)
+    stdout_path = run_dir / "stdout.log"
+    stderr_path = run_dir / "stderr.log"
+    try:
+        stdout_path, stderr_path = run_simulation(
+            binary,
+            args.resolution,
+            case_basename,
+            data_root,
+            run_dir,
+            solver_root,
+        )
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print(f"[solver] stdout log: {stdout_path}", file=sys.stderr)
+        print(f"[solver] stderr log: {stderr_path}", file=sys.stderr)
+        return 1
 
     try:
         time_value, scalar_value, val_path = collect_scalar(data_root, case_basename)
