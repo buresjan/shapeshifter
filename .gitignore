@@ -2,5 +2,4 @@
 build/
 __pycache__/
 logs/
-AGENTS.md
 scripts/

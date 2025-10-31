@@ -1,15 +1,15 @@
 # Shapeshifter
 
-Shapeshifter is a script-oriented playground for rapid experimentation with optimization-driven lattice Boltzmann method (LBM) simulations. The repository wires together four internal submodules (the first three cover the default 2D workflow; `meshgen` extends it to 3D voxel pipelines):
+Shapeshifter is a script-oriented playground for optimization-driven lattice Boltzmann method (LBM) studies. It wires together three core submodules for the default 2D workflow and an optional 3D mesh generator:
 
-- [`submodules/optilb/`](submodules/optilb/) – optimization problems and solvers used to drive geometry updates.
+- [`submodules/optilb/`](submodules/optilb/) – optimization problems and solvers that drive geometry updates.
 - [`submodules/lb2dgeom/`](submodules/lb2dgeom/) – parametric 2D geometry generation utilities for LBM domains.
-- [`submodules/meshgen/`](submodules/meshgen/) – 3D geometry templating and voxelization pipelines for simulation-ready lattices.
+- [`submodules/meshgen/`](submodules/meshgen/) – 3D geometry templating and voxelization pipelines for simulation-ready lattices (used when exploring volumetric cases).
 - [`submodules/tnl-lbm/`](submodules/tnl-lbm/) – C++/CUDA LBM solver that consumes generated geometry and reports objective values.
 
 The typical workflow is:
 
-1. Build a parameterized geometry with `lb2dgeom` and write it to disk.
+1. Build a parameterized geometry with `lb2dgeom` (or `meshgen` for voxelized 3D studies) and write it to disk.
 2. Launch the `tnl-lbm` executable to simulate that geometry and extract a scalar objective.
 3. Feed the result back into an `optilb` optimization loop to generate the next set of parameters.
 
@@ -21,7 +21,9 @@ The typical workflow is:
    cd shapeshifter
    git submodule update --init --recursive
    ```
-2. (Optional) Build the LBM solver following the instructions in `submodules/tnl-lbm/` if you do not already have a compiled binary.
+2. Build the LBM solver following the instructions in `submodules/tnl-lbm/` if you do not already have a compiled binary.
+
+Check `playground/` for runnable experiments. For example, `playground/run_junction_tcpc.py` generates a mesh with `meshgen`, stages the artefacts in `tnl-lbm`, runs the `sim_tcpc` binary, and prints the objective returned by the solver.
 
 ## Python environment
 
@@ -30,18 +32,14 @@ The typical workflow is:
    python -m venv .venv
    source .venv/bin/activate
    ```
-2. Install the local packages and any top-level requirements:
+2. Install the editable submodules and Python dependencies:
    ```bash
-   pip install -e submodules/optilb -e submodules/lb2dgeom
    pip install -r requirements.txt
    ```
-   For 3D voxel/geometry tooling, install the optional `meshgen` package as well:
-   ```bash
-   pip install -e submodules/meshgen
-   ```
-   `meshgen` pulls in additional dependencies (`gmsh`, `trimesh`, `mayavi`, `tqdm`) and may require system packages:
-   - Ensure the Gmsh binary is available on your PATH (or install via your package manager).
+   The requirements file installs `optilb`, `lb2dgeom`, and `meshgen` in editable mode along with the shared scientific stack (`numpy`, `scipy`, `matplotlib`). `meshgen` brings extra optional tooling (`gmsh`, `trimesh`, `mayavi`, `tqdm`) and may require system packages:
+   - Ensure the Gmsh binary is available on your `PATH` (or install it via your package manager).
    - Mayavi relies on Qt/OpenGL; install matching system libraries (e.g., `qtbase5-dev`, `mesa`, vendor GPU drivers) before running the pip install.
+   If you only plan to work with 2D cases, remove or comment out the `-e submodules/meshgen` line in `requirements.txt` before installing.
 
 ## Keeping everything up to date
 
