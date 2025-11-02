@@ -82,12 +82,15 @@ def generate_geometry(output_dir: Path, case_name: str | None, *, resolution: in
     """Create the junction geometry files and return their paths and base filename."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    expected_faces = {"W", "E", "N", "S"}
+
     geom = Geometry(
         name="junction_2d",
         resolution=resolution,
         split=None,
         num_processes=num_processes,
         output_dir=str(output_dir),
+        expected_in_outs=expected_faces,
         lower_angle=lower_angle,
         upper_angle=upper_angle,
         upper_flare=upper_flare,
