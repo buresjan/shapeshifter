@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Generate a meshgen junction case, stage it for sim_tcpc, and collect the solver scalar.
+"""Generate a meshgen junction case, stage it for sim_tcpc_2, and collect the solver scalar.
 
 This helper mirrors ``submodules/meshgen/examples/junction_2d_visualize.py`` but skips Mayavi
 visualization. The script:
 
 1. Builds a 3D lattice for the TCPC solver using the junction template in meshgen.
 2. Copies the generated ``geom_``, ``dim_``, and ``angle_`` files into the
-   ``sim_NSE`` data directories expected by ``sim_tcpc``.
-3. Runs the pre-built ``sim_tcpc`` executable and parses the scalar objective
+   ``sim_NSE`` data directories expected by ``sim_tcpc_2``.
+3. Runs the pre-built ``sim_tcpc_2`` executable and parses the scalar objective
    written to ``sim_NSE/tmp/val_<case>.txt``.
 
 Usage:
-  python playground/run_junction_tcpc.py --binary submodules/tnl-lbm/build/sim_NSE/sim_tcpc
+  python playground/run_junction_tcpc.py --binary submodules/tnl-lbm/build/sim_NSE/sim_tcpc_2
 
 The executable must already exist, typically at
-``submodules/tnl-lbm/build/sim_NSE/sim_tcpc``. No geometry artefacts are kept
+``submodules/tnl-lbm/build/sim_NSE/sim_tcpc_2``. No geometry artefacts are kept
 under version control; everything is written to temporary folders.
 """
 
@@ -41,7 +41,7 @@ def ensure_txt_suffix(name: str) -> str:
 
 def default_paths(project_root: Path) -> Tuple[Path, Path]:
     """Return default locations for the solver binary and data root."""
-    binary = project_root / "submodules" / "tnl-lbm" / "build" / "sim_NSE" / "sim_tcpc"
+    binary = project_root / "submodules" / "tnl-lbm" / "build" / "sim_NSE" / "sim_tcpc_2"
     data_root = project_root / "submodules" / "tnl-lbm" / "sim_NSE"
     return binary, data_root
 
@@ -166,7 +166,7 @@ def run_simulation(
         )
     if result.returncode != 0:
         raise RuntimeError(
-            f"sim_tcpc exited with {result.returncode}. Inspect logs under '{run_dir}'."
+            f"sim_tcpc_2 exited with {result.returncode}. Inspect logs under '{run_dir}'."
         )
     return stdout_path, stderr_path
 
@@ -204,13 +204,13 @@ def collect_scalar(data_root: Path, case_name: str) -> Tuple[float, float, Path]
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate a meshgen junction case and run tnl-lbm sim_tcpc.",
+        description="Generate a meshgen junction case and run tnl-lbm sim_tcpc_2.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "--binary",
         type=Path,
-        help="Path to the pre-built sim_tcpc executable.",
+        help="Path to the pre-built sim_tcpc_2 executable.",
     )
     parser.add_argument(
         "--data-root",
@@ -230,7 +230,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--resolution",
         type=int,
         default=5,
-        help="Voxel resolution for meshgen and lattice resolution for sim_tcpc.",
+        help="Voxel resolution for meshgen and lattice resolution for sim_tcpc_2.",
     )
     parser.add_argument(
         "--lower-angle",
