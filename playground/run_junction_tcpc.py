@@ -107,7 +107,7 @@ def generate_geometry(output_dir: Path, case_name: str | None, *, resolution: in
 
     print(f"[meshgen] Exporting triplet with base '{final_case_name}' into {output_dir}...")
     geom.save_voxel_mesh_to_text(final_case_name)
-
+    
     basename = Path(final_case_name).name
     files = {
         "geometry": output_dir / f"geom_{basename}",
