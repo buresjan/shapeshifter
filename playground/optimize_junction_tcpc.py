@@ -20,41 +20,42 @@ template. The optimisation is intentionally simple and self-contained:
   - Normalisation: enabled (optimises in the unit hypercube)
 
 How it works (per evaluation):
-  1) Build a unique run directory and a per-run `sim_NSE` data root.
-  2) Generate the mesh triplet (`geom_`, `dim_`, `angle_`) with meshgen.
-  3) Stage the files under the run’s `sim_NSE` and launch `sim_tcpc_2` with
-     `cwd=run_dir` so its relative paths resolve to the staged data.
-  4) Parse the objective from `sim_NSE/tmp/val_<case>.txt`.
+  1) Generate the mesh triplet (`geom_`, `dim_`, `angle_`) with meshgen under a
+     temporary workspace.
+  2) Stage the triplet inside the `tnl-lbm` repository under `sim_NSE`.
+  3) Invoke `submodules/tnl-lbm/run_tcpc_simulation.py` so the solver is
+     submitted via Slurm (`sbatch`) and monitored until completion.
+  4) Return the scalar objective emitted by the solver (failing loudly if the
+     job terminates without a value).
 
 Run instructions (local or Slurm):
-  - Local:  ensure `tnl-lbm` is built (sim_tcpc_2 exists), then:
-      python playground/optimize_junction_tcpc.py
   - Slurm: submit the launcher:
       sbatch playground/optimize_junction_tcpc.sh
 
 Notes:
 - No CLI knobs — all parameters live in this script for clarity.
-- The optimiser evaluates points in parallel using a thread pool to keep the
-  implementation robust in diverse environments (no pickling issues). The
-  heavy lifting happens in an external binary, so threads are sufficient.
+- Parallel evaluation uses a thread pool to avoid pickling issues. Each worker
+  stages its own uniquely named geometry artefacts before submitting the Slurm
+  job via `run_tcpc_simulation.py`.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import math
 import os
 import shutil
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import Tuple
+from typing import Callable, Dict, Tuple
 
 import numpy as np
 
 from optilb import DesignSpace, OptimizationProblem
 
-# Reuse the proven geometry+solver helpers from the runnable TCPC script.
-# This file lives in the same `playground/` directory, so we can import it
-# directly without package boilerplate.
+# Reuse the proven geometry helpers from the runnable TCPC script.
 from run_junction_tcpc import (
     default_paths,
     ensure_txt_suffix,
@@ -62,8 +63,6 @@ from run_junction_tcpc import (
     locate_solver_root,
     prepare_run_directory,
     stage_geometry,
-    run_simulation,
-    collect_scalar,
 )
 
 
@@ -71,7 +70,7 @@ from run_junction_tcpc import (
 # Fixed configuration (edit here, no CLI)
 # ---------------------------------------------------------------------------
 RESOLUTION = 5
-MAX_EVALS = 80
+MAX_EVALS = 40
 
 # Initial point (offset, lower_angle, upper_angle, lower_flare, upper_flare)
 X0 = np.array([0.1, 4.0, -3.0, 0.1, 0.1], dtype=float)
@@ -87,11 +86,50 @@ N_WORKERS = int(os.environ.get("OPT_NM_WORKERS", "8"))
 os.environ.setdefault("OPTILB_FORCE_THREAD_POOL", "1")
 
 
+# Slurm submission defaults (override via environment variables if desired)
+def _env_optional_int(var: str, default: int | None) -> int | None:
+    raw = os.environ.get(var)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Environment variable {var} must be an integer, got {raw!r}") from exc
+
+
+def _env_float(var: str, default: float) -> float:
+    raw = os.environ.get(var)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"Environment variable {var} must be a float, got {raw!r}") from exc
+
+
+def _env_bool(var: str, default: bool = False) -> bool:
+    raw = os.environ.get(var)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+SLURM_PARTITION = os.environ.get("TCPC_SLURM_PARTITION")
+SLURM_GPUS = _env_optional_int("TCPC_SLURM_GPUS", 1)
+SLURM_CPUS = _env_optional_int("TCPC_SLURM_CPUS", 8)
+SLURM_MEM = os.environ.get("TCPC_SLURM_MEM", "32G")
+SLURM_WALLTIME = os.environ.get("TCPC_SLURM_WALLTIME", "20:00:00")
+SLURM_POLL_INTERVAL = _env_float("TCPC_SLURM_POLL_INTERVAL", 60.0)
+SLURM_AVG_WINDOW = _env_float("TCPC_SLURM_AVG_WINDOW", 1.0)
+SLURM_VERBOSE = _env_bool("TCPC_SLURM_VERBOSE", False)
+
+
 @dataclass(frozen=True)
 class Paths:
     project_root: Path
     solver_binary: Path
     solver_root: Path
+    run_tcpc_script: Path
 
 
 def _project_paths() -> Paths:
@@ -104,41 +142,54 @@ def _project_paths() -> Paths:
             f"sim_tcpc_2 binary not found at '{solver_binary}'. Build tnl-lbm first."
         )
     solver_root = locate_solver_root(solver_binary)
-    return Paths(project_root=project_root, solver_binary=solver_binary, solver_root=solver_root)
+    run_tcpc_script = solver_root / "run_tcpc_simulation.py"
+    if not run_tcpc_script.is_file():
+        raise FileNotFoundError(
+            f"run_tcpc_simulation.py not found at '{run_tcpc_script}'. Ensure the tnl-lbm submodule is present."
+        )
+    return Paths(
+        project_root=project_root,
+        solver_binary=solver_binary,
+        solver_root=solver_root,
+        run_tcpc_script=run_tcpc_script,
+    )
 
 
 def _hash_params(x: np.ndarray) -> str:
     """Stable short hash for a parameter vector (used for file/run naming)."""
-    # Compact canonical string avoids float repr ambiguity; 8-char prefix is fine.
     txt = ",".join(f"{v:.8g}" for v in np.asarray(x, dtype=float))
     return hashlib.sha1(txt.encode("ascii")).hexdigest()[:12]
 
 
-def _objective(x: np.ndarray) -> float:
-    """Objective wrapper: generate geometry, run solver, return scalar.
+@lru_cache(maxsize=1)
+def _load_run_tcpc_callable(script_path: Path) -> Callable[..., float]:
+    """Load run_tcpc_simulation.run_tcpc_simulation from the tnl-lbm submodule."""
+    spec = importlib.util.spec_from_file_location("tnl_lbm_run_tcpc", str(script_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load module spec from {script_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[arg-type]
+    try:
+        return module.run_tcpc_simulation  # type: ignore[attr-defined]
+    except AttributeError as exc:
+        raise AttributeError(
+            f"'run_tcpc_simulation.py' at {script_path} does not expose run_tcpc_simulation"
+        ) from exc
 
-    This function is intentionally stateless and creates unique per‑run
-    directories to be safe under parallel evaluation.
-    """
+
+def _objective(x: np.ndarray) -> float:
+    """Objective wrapper: generate geometry, run solver, return scalar."""
     p = _project_paths()
 
-    # Map design vector to geometry keywords
     offset, lower_angle, upper_angle, lower_flare, upper_flare = map(float, x)
 
-    # Unique case/run identifiers
     case_tag = _hash_params(x)
     case_name = ensure_txt_suffix(f"junction_{case_tag}.txt")
+    generated_basename = Path(case_name).name
 
-    # Run directory and per-run data root
-    run_dir = prepare_run_directory(p.project_root, Path(case_name).name)
-    data_root = (run_dir / "sim_NSE")
-    for sub in ("geometry", "dimensions", "angle", "tmp"):
-        (data_root / sub).mkdir(parents=True, exist_ok=True)
-
-    # Meshgen workspace lives under the run directory for isolation
+    run_dir = prepare_run_directory(p.project_root, generated_basename)
     workspace = run_dir / "meshgen_output"
 
-    # 1) Generate triplet via meshgen
     files, generated_case_name = generate_geometry(
         workspace,
         case_name,
@@ -150,47 +201,66 @@ def _objective(x: np.ndarray) -> float:
         offset=offset,
         num_processes=1,
     )
+    generated_basename = Path(generated_case_name).name
 
-    # 2) Stage into per-run sim_NSE tree
-    stage_geometry(files, data_root)
+    data_root = p.solver_root / "sim_NSE"
+    staged_files: Dict[str, Path] = {}
+    cleanup_geometry = False
+    cleanup_run_dir = False
 
-    # 3) Run solver and collect the latest sample
     try:
-        _stdout, _stderr = run_simulation(
-            p.solver_binary,
-            RESOLUTION,
-            Path(generated_case_name).name,
-            data_root,
-            run_dir,
-            p.solver_root,
-        )
-    except Exception:
-        # Preserve run_dir for debugging on failures
-        raise
-    finally:
-        # Remove heavy meshgen workspace to conserve disk space
-        try:
-            shutil.rmtree(workspace, ignore_errors=True)
-        except Exception:
-            pass
+        to_stage = {k: v for k, v in files.items() if k in {"geometry", "dimensions", "angle"}}
+        staged_files = stage_geometry(to_stage, data_root)
 
-    _t, value, _val_path = collect_scalar(data_root, Path(generated_case_name).name)
-    return float(value)
+        run_tcpc = _load_run_tcpc_callable(p.run_tcpc_script)
+        value = run_tcpc(
+            generated_basename,
+            resolution=RESOLUTION,
+            project_root=p.solver_root,
+            binary_path=p.solver_binary,
+            partition=SLURM_PARTITION,
+            gpus=SLURM_GPUS,
+            cpus=SLURM_CPUS,
+            mem=SLURM_MEM,
+            walltime=SLURM_WALLTIME,
+            poll_interval=SLURM_POLL_INTERVAL,
+            default_on_failure=float("nan"),
+            avg_window=SLURM_AVG_WINDOW,
+            verbose=SLURM_VERBOSE,
+        )
+        if math.isnan(value):
+            raise RuntimeError(
+                f"TCPC Slurm run for case '{generated_basename}' returned NaN. "
+                "Check runs under submodules/tnl-lbm/runs_tcpc/ for diagnostics."
+            )
+
+        cleanup_geometry = True
+        cleanup_run_dir = True
+        return float(value)
+    finally:
+        if cleanup_geometry and staged_files:
+            for path in staged_files.values():
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    continue
+        if cleanup_run_dir:
+            shutil.rmtree(run_dir, ignore_errors=True)
 
 
 def main() -> Tuple[np.ndarray, float]:
-    # Design space and problem definition
     space = DesignSpace(lower=LOWER, upper=UPPER, names=(
         "offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare"
     ))
 
-    # Configure Nelder–Mead with memoisation and desired worker count
     from optilb.optimizers import NelderMeadOptimizer
 
     nm = NelderMeadOptimizer(
         n_workers=N_WORKERS,
         memoize=True,
-        # Keep other coefficients at defaults; normalization will handle scales
+        parallel_poll_points=True,
     )
 
     problem = OptimizationProblem(
@@ -198,8 +268,8 @@ def main() -> Tuple[np.ndarray, float]:
         space=space,
         x0=X0,
         optimizer=nm,
-        parallel=True,          # allow parallel evals
-        normalize=True,         # operate in unit hypercube
+        parallel=True,
+        normalize=True,
         max_evals=MAX_EVALS,
         verbose=True,
     )
@@ -228,4 +298,3 @@ def main() -> Tuple[np.ndarray, float]:
 
 if __name__ == "__main__":
     main()
-

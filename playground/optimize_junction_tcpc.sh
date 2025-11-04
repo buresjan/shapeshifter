@@ -7,7 +7,7 @@
 # The Python script has all parameters embedded; no CLI flags are used.
 
 #SBATCH --job-name=opt-tcpc-nm
-#SBATCH --time=48:00:00
+#SBATCH --time=168:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus=1
 #SBATCH --mem=32G
@@ -42,4 +42,3 @@ cd "${REPO_ROOT}"
 
 echo "Launching TCPC Nelder–Mead optimisation"
 python3 "${SCRIPT_PATH}"
-
