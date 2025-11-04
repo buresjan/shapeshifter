@@ -73,11 +73,12 @@ RESOLUTION = 5
 MAX_EVALS = 40
 
 # Initial point (offset, lower_angle, upper_angle, lower_flare, upper_flare)
-X0 = np.array([0.1, 4.0, -3.0, 0.1, 0.1], dtype=float)
+# Geometry template expects offset within ±0.02 m and flares below ≈3.5 mm.
+X0 = np.array([0.001, 4.0, -3.0, 0.0015, 0.0015], dtype=float)
 
 # Bounds
-LOWER = np.array([-1.0, -20.0, -20.0, 0.0, 0.0], dtype=float)
-UPPER = np.array([+1.0, +20.0, +20.0, 0.25, 0.25], dtype=float)
+LOWER = np.array([-0.01, -20.0, -20.0, 0.0, 0.0], dtype=float)
+UPPER = np.array([+0.01, +20.0, +20.0, 0.0025, 0.0025], dtype=float)
 
 # Parallel evaluation workers (threads)
 N_WORKERS = int(os.environ.get("OPT_NM_WORKERS", "8"))
