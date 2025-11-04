@@ -40,7 +40,13 @@ def ensure_txt_suffix(name: str) -> str:
 
 
 def default_paths(project_root: Path) -> Tuple[Path, Path]:
-    """Return default locations for the solver binary and data root."""
+    """Return default locations for the solver binary and data root.
+
+    Note: the runner no longer stages inputs into the repository sim_NSE by
+    default. Instead, it creates a per-run data root under ``run_dir/sim_NSE``
+    and runs the solver with ``cwd=run_dir`` so its relative paths resolve
+    there. The second return value is kept for CLI compatibility only.
+    """
     binary = project_root / "submodules" / "tnl-lbm" / "build" / "sim_NSE" / "sim_tcpc_2"
     data_root = project_root / "submodules" / "tnl-lbm" / "sim_NSE"
     return binary, data_root
@@ -152,7 +158,7 @@ def run_simulation(
     stdout_path = run_dir / "stdout.log"
     stderr_path = run_dir / "stderr.log"
     print(f"[solver] Launching: {' '.join(command)}")
-    print(f"[solver] Working directory: {solver_root}")
+    print(f"[solver] Working directory: {run_dir}")
     print(f"[solver] stdout log: {stdout_path}")
     print(f"[solver] stderr log: {stderr_path}")
     with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
@@ -160,7 +166,7 @@ def run_simulation(
     ) as stderr_file:
         result = subprocess.run(
             command,
-            cwd=solver_root,
+            cwd=run_dir,
             env=env,
             text=True,
             stdout=stdout_file,
@@ -287,17 +293,11 @@ def main(argv: list[str] | None = None) -> int:
     default_binary, default_data_root = default_paths(project_root)
 
     binary = (args.binary or default_binary).resolve()
-    data_root = (args.data_root or default_data_root).resolve()
     workspace = (args.workspace or (project_root / "tmp" / "junction_tcpc")).resolve()
 
     if not binary.is_file():
         print(f"error: solver binary '{binary}' not found", file=sys.stderr)
         return 1
-
-    required_subdirs = ("geometry", "dimensions", "angle", "tmp")
-    for subdir in required_subdirs:
-        target_dir = data_root / subdir
-        target_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         generated_files, case_name = generate_geometry(
@@ -315,10 +315,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: mesh generation failed: {exc}", file=sys.stderr)
         return 1
 
-    staged_paths = stage_geometry(generated_files, data_root)
+    # Prepare isolated run directory and per-run data root
     case_basename = Path(case_name).name
     run_dir = prepare_run_directory(project_root, case_basename)
     print(f"[run] Solver artefacts directory: {run_dir}")
+
+    # Determine where to stage sim_NSE: default to run_dir/sim_NSE; if user
+    # supplied an explicit data root, stage there and symlink run_dir/sim_NSE -> data_root
+    if args.data_root is not None:
+        data_root = Path(args.data_root).resolve()
+        try:
+            (run_dir / "sim_NSE").symlink_to(data_root, target_is_directory=True)
+        except FileExistsError:
+            pass
+    else:
+        data_root = (run_dir / "sim_NSE").resolve()
+
+    # Ensure required subdirectories exist under the chosen data root
+    required_subdirs = ("geometry", "dimensions", "angle", "tmp")
+    for subdir in required_subdirs:
+        target_dir = data_root / subdir
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Stage freshly generated geometry into the selected data root
+    staged_paths = stage_geometry(generated_files, data_root)
 
     try:
         solver_root = locate_solver_root(binary)
