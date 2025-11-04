@@ -21,8 +21,9 @@ import argparse
 import random
 import shutil
 from dataclasses import dataclass
+from itertools import product
 from pathlib import Path
-from typing import Iterable, List
+from typing import List
 
 import numpy as np
 
@@ -32,6 +33,7 @@ from run_junction_tcpc import ensure_txt_suffix, generate_geometry
 LOWER = np.array([-0.005, -10.0, -10.0, 0.0, 0.0], dtype=float)
 UPPER = np.array([+0.005, +10.0, +10.0, 0.0015, 0.0015], dtype=float)
 PARAM_NAMES = ("offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare")
+X0 = np.array([0.0005, 3.0, -2.0, 0.001, 0.001], dtype=float)
 
 
 @dataclass(frozen=True)
@@ -42,10 +44,25 @@ class SampleResult:
     case_name: str
 
 
+# ---------------------------------------------------------------------------
+# Parameter generation helpers
+# ---------------------------------------------------------------------------
 def _sample_parameters(rng: random.Random) -> np.ndarray:
     """Draw a random parameter vector within [LOWER, UPPER]."""
     alpha = np.array([rng.random() for _ in range(len(PARAM_NAMES))], dtype=float)
     return LOWER + alpha * (UPPER - LOWER)
+
+
+def _edge_parameter_sets() -> List[np.ndarray]:
+    """Generate deterministic edge-case parameter vectors."""
+    combos: List[np.ndarray] = []
+    for toggles in product((0, 1), repeat=len(PARAM_NAMES)):
+        mask = np.array(toggles, dtype=bool)
+        vec = np.where(mask, UPPER, LOWER)
+        combos.append(vec.astype(float))
+    combos.append((LOWER + UPPER) * 0.5)  # midpoint
+    combos.append(X0.copy())
+    return combos
 
 
 def _workspace_root(project_root: Path) -> Path:
@@ -54,8 +71,7 @@ def _workspace_root(project_root: Path) -> Path:
     return root
 
 
-def _run_sample(idx: int, project_root: Path, rng: random.Random, keep: bool) -> SampleResult:
-    params = _sample_parameters(rng)
+def _run_sample(idx: int, project_root: Path, params: np.ndarray, keep: bool) -> SampleResult:
     case_name = ensure_txt_suffix(f"smoke_{idx:03d}")
 
     workspace = _workspace_root(project_root) / f"sample_{idx:03d}"
@@ -114,6 +130,12 @@ def _parse_args() -> argparse.Namespace:
         help="Random seed for reproducibility.",
     )
     parser.add_argument(
+        "--mode",
+        choices=("random", "edges", "both"),
+        default="random",
+        help="Geometry selection strategy: random sampling, deterministic edge sweep, or both.",
+    )
+    parser.add_argument(
         "--keep-artifacts",
         action="store_true",
         help="Retain meshgen workspaces under tmp/geometry_smoke/ for inspection.",
@@ -124,17 +146,29 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
 
-    if args.samples <= 0:
-        print("No samples requested; exiting.")
-        return 0
-
     rng = random.Random(args.seed)
     project_root = Path(__file__).resolve().parents[1]
 
+    params_to_test: List[np.ndarray] = []
+    if args.mode in ("edges", "both"):
+        params_to_test.extend(_edge_parameter_sets())
+        print(f"[info] Added {len(params_to_test)} edge-case geometries.")
+    if args.mode in ("random", "both"):
+        if args.samples <= 0:
+            print("[info] No random samples requested.")
+        else:
+            for _ in range(args.samples):
+                params_to_test.append(_sample_parameters(rng))
+            print(f"[info] Added {args.samples} random geometries.")
+
+    if not params_to_test:
+        print("No geometries to generate; exiting.")
+        return 0
+
     successes: List[SampleResult] = []
     try:
-        for idx in range(1, args.samples + 1):
-            result = _run_sample(idx, project_root, rng, keep=args.keep_artifacts)
+        for idx, params in enumerate(params_to_test, start=1):
+            result = _run_sample(idx, project_root, params, keep=args.keep_artifacts)
             successes.append(result)
     except Exception:
         return 1
