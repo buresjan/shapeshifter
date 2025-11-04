@@ -73,12 +73,12 @@ RESOLUTION = 5
 MAX_EVALS = 40
 
 # Initial point (offset, lower_angle, upper_angle, lower_flare, upper_flare)
-# Geometry template expects offset within ±0.02 m and flares below ≈3.5 mm.
+# Geometry template is stable only for small offsets/flaring.
 X0 = np.array([0.001, 4.0, -3.0, 0.0015, 0.0015], dtype=float)
 
 # Bounds
-LOWER = np.array([-0.01, -20.0, -20.0, 0.0, 0.0], dtype=float)
-UPPER = np.array([+0.01, +20.0, +20.0, 0.0025, 0.0025], dtype=float)
+LOWER = np.array([-0.008, -20.0, -20.0, 0.0, 0.0], dtype=float)
+UPPER = np.array([+0.008, +20.0, +20.0, 0.002, 0.002], dtype=float)
 
 # Parallel evaluation workers (threads)
 N_WORKERS = int(os.environ.get("OPT_NM_WORKERS", "8"))
@@ -183,6 +183,16 @@ def _objective(x: np.ndarray) -> float:
     case_tag = _hash_params(x)
     case_name = ensure_txt_suffix(f"junction_{case_tag}.txt")
     generated_basename = Path(case_name).name
+
+    print(
+        "[obj] design",
+        f"offset={offset:.6f}",
+        f"lower_angle={lower_angle:.6f}",
+        f"upper_angle={upper_angle:.6f}",
+        f"lower_flare={lower_flare:.6f}",
+        f"upper_flare={upper_flare:.6f}",
+        flush=True,
+    )
 
     run_dir = prepare_run_directory(p.project_root, generated_basename)
     workspace = run_dir / "meshgen_output"
