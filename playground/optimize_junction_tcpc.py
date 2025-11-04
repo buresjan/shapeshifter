@@ -73,12 +73,12 @@ RESOLUTION = 5
 MAX_EVALS = 40
 
 # Initial point (offset, lower_angle, upper_angle, lower_flare, upper_flare)
-# Geometry template is stable only for small offsets/flaring.
-X0 = np.array([0.001, 4.0, -3.0, 0.0015, 0.0015], dtype=float)
+# Geometry union is only robust when branches stay close to the stem.
+X0 = np.array([0.0005, 3.0, -2.0, 0.001, 0.001], dtype=float)
 
 # Bounds
-LOWER = np.array([-0.008, -20.0, -20.0, 0.0, 0.0], dtype=float)
-UPPER = np.array([+0.008, +20.0, +20.0, 0.002, 0.002], dtype=float)
+LOWER = np.array([-0.005, -10.0, -10.0, 0.000, 0.000], dtype=float)
+UPPER = np.array([+0.005, +10.0, +10.0, 0.0015, 0.0015], dtype=float)
 
 # Parallel evaluation workers (threads)
 N_WORKERS = int(os.environ.get("OPT_NM_WORKERS", "8"))
