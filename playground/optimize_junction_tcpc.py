@@ -82,10 +82,6 @@ UPPER = np.array([+1.0, +20.0, +20.0, 0.25, 0.25], dtype=float)
 # Parallel evaluation workers (threads)
 N_WORKERS = int(os.environ.get("OPT_NM_WORKERS", "8"))
 
-# Enforce threaded parallelism for robustness (no pickling constraints).
-os.environ.setdefault("OPTILB_FORCE_THREAD_POOL", "1")
-
-
 # Slurm submission defaults (override via environment variables if desired)
 def _env_optional_int(var: str, default: int | None) -> int | None:
     raw = os.environ.get(var)

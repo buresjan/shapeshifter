@@ -21,8 +21,6 @@ if [[ "${1:-}" == "--local" ]]; then
     shift
 fi
 
-# Favor thread-based parallelism for robustness (external binary dominates runtime)
-export OPTILB_FORCE_THREAD_POOL=1
 export OPT_NM_WORKERS=${OPT_NM_WORKERS:-8}
 
 if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
