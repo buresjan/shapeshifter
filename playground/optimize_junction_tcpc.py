@@ -49,7 +49,7 @@ import shutil
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Dict, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 
@@ -162,19 +162,46 @@ def _hash_params(x: np.ndarray) -> str:
 
 
 @lru_cache(maxsize=1)
-def _load_run_tcpc_callable(script_path: Path) -> Callable[..., float]:
-    """Load run_tcpc_simulation.run_tcpc_simulation from the tnl-lbm submodule."""
+def _load_run_tcpc_module(script_path: Path):
+    """Load the run_tcpc_simulation module and patch staging for per-run data."""
     spec = importlib.util.spec_from_file_location("tnl_lbm_run_tcpc", str(script_path))
     if spec is None or spec.loader is None:
         raise ImportError(f"Unable to load module spec from {script_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)  # type: ignore[arg-type]
-    try:
-        return module.run_tcpc_simulation  # type: ignore[attr-defined]
-    except AttributeError as exc:
+    if not hasattr(module, "run_tcpc_simulation"):
         raise AttributeError(
             f"'run_tcpc_simulation.py' at {script_path} does not expose run_tcpc_simulation"
-        ) from exc
+        )
+
+    if not hasattr(module, "_codex_stage_registry"):
+        module._codex_stage_registry = {}
+
+    if not getattr(module, "_codex_make_run_dir_patched", False):
+        original_make_run_dir = getattr(module, "_make_run_dir")
+
+        def _make_run_dir_with_staging(project_root: Path, filename: str) -> Path:
+            run_dir = original_make_run_dir(project_root, filename)
+            registry = getattr(module, "_codex_stage_registry", {})
+            stage_queue = registry.get(filename)
+            if stage_queue:
+                stage_sources = stage_queue.pop(0)
+                if not stage_queue:
+                    registry.pop(filename, None)
+                sim_root = run_dir / "sim_NSE"
+                for subdir in ("geometry", "dimensions", "angle", "tmp"):
+                    (sim_root / subdir).mkdir(parents=True, exist_ok=True)
+                for label, source in stage_sources.items():
+                    target_dir = "tmp" if label == "values" else label
+                    destination = sim_root / target_dir / source.name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, destination)
+            return run_dir
+
+        module._make_run_dir = _make_run_dir_with_staging  # type: ignore[attr-defined]
+        module._codex_make_run_dir_patched = True
+
+    return module
 
 
 def _objective(x: np.ndarray) -> float:
@@ -219,24 +246,20 @@ def _objective(x: np.ndarray) -> float:
         return float(GEOMETRY_PENALTY)
     generated_basename = Path(generated_case_name).name
 
-    data_root = p.solver_root / "sim_NSE"
-    run_data_root = run_dir / "sim_NSE"
-    for subdir in ("geometry", "dimensions", "angle", "tmp"):
-        (run_data_root / subdir).mkdir(parents=True, exist_ok=True)
-
     staged_files: Dict[str, Path] = {}
     cleanup_geometry = False
     cleanup_run_dir = False
 
     try:
         to_stage = {k: v for k, v in files.items() if k in {"geometry", "dimensions", "angle"}}
-        # Each run directory must contain its own sim_NSE tree for the solver's
-        # relative lookups. Keep staging into the repository sim_NSE as well so
-        # existing tooling (e.g. manual runs) stays functional.
-        stage_geometry(to_stage, run_data_root)
+        tcpc_module = _load_run_tcpc_module(p.run_tcpc_script)
+        registry = getattr(tcpc_module, "_codex_stage_registry")
+        registry.setdefault(generated_basename, []).append(dict(to_stage))
+
+        data_root = p.solver_root / "sim_NSE"
         staged_files = stage_geometry(to_stage, data_root)
 
-        run_tcpc = _load_run_tcpc_callable(p.run_tcpc_script)
+        run_tcpc = tcpc_module.run_tcpc_simulation  # type: ignore[attr-defined]
         value = run_tcpc(
             generated_basename,
             resolution=RESOLUTION,
