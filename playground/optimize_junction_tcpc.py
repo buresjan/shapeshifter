@@ -220,12 +220,20 @@ def _objective(x: np.ndarray) -> float:
     generated_basename = Path(generated_case_name).name
 
     data_root = p.solver_root / "sim_NSE"
+    run_data_root = run_dir / "sim_NSE"
+    for subdir in ("geometry", "dimensions", "angle", "tmp"):
+        (run_data_root / subdir).mkdir(parents=True, exist_ok=True)
+
     staged_files: Dict[str, Path] = {}
     cleanup_geometry = False
     cleanup_run_dir = False
 
     try:
         to_stage = {k: v for k, v in files.items() if k in {"geometry", "dimensions", "angle"}}
+        # Each run directory must contain its own sim_NSE tree for the solver's
+        # relative lookups. Keep staging into the repository sim_NSE as well so
+        # existing tooling (e.g. manual runs) stays functional.
+        stage_geometry(to_stage, run_data_root)
         staged_files = stage_geometry(to_stage, data_root)
 
         run_tcpc = _load_run_tcpc_callable(p.run_tcpc_script)
