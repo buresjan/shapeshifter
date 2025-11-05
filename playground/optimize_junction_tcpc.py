@@ -69,7 +69,7 @@ from run_junction_tcpc import (
 # ---------------------------------------------------------------------------
 # Fixed configuration (edit here, no CLI)
 # ---------------------------------------------------------------------------
-RESOLUTION = 5
+RESOLUTION = 4
 MAX_EVALS = 40
 
 # Initial point (offset, lower_angle, upper_angle, lower_flare, upper_flare)
