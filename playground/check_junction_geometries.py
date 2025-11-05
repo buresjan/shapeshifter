@@ -18,6 +18,7 @@ leaves the workspace behind for inspection.
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import shutil
 from dataclasses import dataclass
@@ -33,7 +34,7 @@ from run_junction_tcpc import ensure_txt_suffix, generate_geometry
 LOWER = np.array([-0.005, -10.0, -10.0, 0.0, 0.0], dtype=float)
 UPPER = np.array([+0.005, +10.0, +10.0, 0.0015, 0.0015], dtype=float)
 PARAM_NAMES = ("offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare")
-X0 = np.array([0.0005, 3.0, -2.0, 0.001, 0.001], dtype=float)
+X0 = np.array([0.0, 0.0, 0.0, 0.00075, 0.00075], dtype=float)
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,8 @@ def _run_sample(idx: int, project_root: Path, params: np.ndarray, keep: bool) ->
         f"lower_flare={lower_flare:.6f}, upper_flare={upper_flare:.6f}"
     )
 
+    prev_tmp = os.environ.get("TMPDIR")
+    os.environ["TMPDIR"] = str(workspace)
     try:
         files, generated_case = generate_geometry(
             workspace,
@@ -100,8 +103,16 @@ def _run_sample(idx: int, project_root: Path, params: np.ndarray, keep: bool) ->
         )
     except Exception as exc:
         print(f"[sample {idx:03d}] FAILURE: {exc}")
+        geo_candidates = sorted(workspace.glob("meshgen_geo_*/*.geo"))
+        if geo_candidates:
+            print(f"[sample {idx:03d}] Filled GEO preserved at {geo_candidates[-1]}")
         print(f"[sample {idx:03d}] workspace retained at {workspace}")
         raise
+    finally:
+        if prev_tmp is None:
+            os.environ.pop("TMPDIR", None)
+        else:
+            os.environ["TMPDIR"] = prev_tmp
 
     print(
         f"[sample {idx:03d}] SUCCESS -> {generated_case} "

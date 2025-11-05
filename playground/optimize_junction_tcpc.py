@@ -74,11 +74,14 @@ MAX_EVALS = 40
 
 # Initial point (offset, lower_angle, upper_angle, lower_flare, upper_flare)
 # Geometry union is only robust when branches stay close to the stem.
-X0 = np.array([0.0005, 3.0, -2.0, 0.001, 0.001], dtype=float)
+X0 = np.array([0.0, 0.0, 0.0, 0.00075, 0.00075], dtype=float)
 
 # Bounds
 LOWER = np.array([-0.005, -10.0, -10.0, 0.000, 0.000], dtype=float)
 UPPER = np.array([+0.005, +10.0, +10.0, 0.0015, 0.0015], dtype=float)
+
+# Penalised objective value when geometry cannot be generated
+GEOMETRY_PENALTY = 1.0e9
 
 # Parallel evaluation workers (threads)
 N_WORKERS = int(os.environ.get("OPT_NM_WORKERS", "8"))
@@ -197,17 +200,23 @@ def _objective(x: np.ndarray) -> float:
     run_dir = prepare_run_directory(p.project_root, generated_basename)
     workspace = run_dir / "meshgen_output"
 
-    files, generated_case_name = generate_geometry(
-        workspace,
-        case_name,
-        resolution=RESOLUTION,
-        lower_angle=lower_angle,
-        upper_angle=upper_angle,
-        upper_flare=upper_flare,
-        lower_flare=lower_flare,
-        offset=offset,
-        num_processes=1,
-    )
+    try:
+        files, generated_case_name = generate_geometry(
+            workspace,
+            case_name,
+            resolution=RESOLUTION,
+            lower_angle=lower_angle,
+            upper_angle=upper_angle,
+            upper_flare=upper_flare,
+            lower_flare=lower_flare,
+            offset=offset,
+            num_processes=1,
+        )
+    except Exception as exc:
+        print(f"[obj] geometry failed: {exc}", flush=True)
+        shutil.rmtree(workspace, ignore_errors=True)
+        shutil.rmtree(run_dir, ignore_errors=True)
+        return float(GEOMETRY_PENALTY)
     generated_basename = Path(generated_case_name).name
 
     data_root = p.solver_root / "sim_NSE"
