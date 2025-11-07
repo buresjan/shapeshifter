@@ -12,6 +12,9 @@
 #SBATCH --gpus=1
 #SBATCH --mem=32G
 #SBATCH --output=opt-tcpc-nm-%j.out
+# Append to stdout/stderr instead of truncating on restart/requeue
+# (prevents losing earlier logs when Restarts>0)
+#SBATCH --open-mode=append
 
 set -euo pipefail
 
@@ -39,4 +42,6 @@ SCRIPT_PATH="${REPO_ROOT}/playground/optimize_junction_tcpc.py"
 cd "${REPO_ROOT}"
 
 echo "Launching TCPC Nelder–Mead optimisation"
-python3 "${SCRIPT_PATH}"
+echo "Restart count: ${SLURM_RESTART_COUNT:-0} at $(date --iso-8601=seconds)"
+# Unbuffered Python so progress appears promptly in Slurm logs
+python3 -u "${SCRIPT_PATH}"
