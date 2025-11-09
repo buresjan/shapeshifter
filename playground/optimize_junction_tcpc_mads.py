@@ -53,10 +53,12 @@ def _memoized_objective(x: np.ndarray) -> float:
     with _CACHE_LOCK:
         cached = _OBJECTIVE_CACHE.get(key)
     if cached is not None:
+        print(f"[obj] cached value={cached:.6g} for x={key}", flush=True)
         return float(cached)
     value = float(_nm_objective(arr))
     with _CACHE_LOCK:
         _OBJECTIVE_CACHE[key] = value
+    print(f"[obj] evaluated value={value:.6g} for x={key}", flush=True)
     return value
 
 
