@@ -46,6 +46,7 @@ import importlib.util
 import math
 import os
 import shutil
+import uuid
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -85,6 +86,18 @@ GEOMETRY_PENALTY = 1.0e9
 
 # Parallel evaluation workers (threads)
 N_WORKERS = int(os.environ.get("OPT_NM_WORKERS", "8"))
+
+# Optional per-run tag to avoid staging collisions when multiple optimisations
+# share the same solver data root. Defaults to a random token.
+def _sanitize_tag(raw: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in raw)
+    return cleaned.strip("_-")
+
+
+_RUN_TAG = os.environ.get("TCPC_RUN_TAG") or f"run_{uuid.uuid4().hex[:8]}"
+_RUN_TAG = _sanitize_tag(_RUN_TAG)
+if _RUN_TAG:
+    _RUN_TAG = f"{_RUN_TAG}_"
 
 # Slurm submission defaults (override via environment variables if desired)
 def _env_optional_int(var: str, default: int | None) -> int | None:
@@ -211,7 +224,8 @@ def _objective(x: np.ndarray) -> float:
     offset, lower_angle, upper_angle, lower_flare, upper_flare = map(float, x)
 
     case_tag = _hash_params(x)
-    case_name = ensure_txt_suffix(f"junction_{case_tag}.txt")
+    case_stem = f"{_RUN_TAG}junction_{case_tag}" if _RUN_TAG else f"junction_{case_tag}"
+    case_name = ensure_txt_suffix(f"{case_stem}.txt")
     generated_basename = Path(case_name).name
 
     print(
