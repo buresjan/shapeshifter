@@ -6,7 +6,7 @@
 #
 # The Python script has all parameters embedded; no CLI flags are used.
 
-#SBATCH --job-name=opt-tcpc-nm
+#SBATCH --job-name=nm-opt-tcpc
 #SBATCH --time=168:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus=1
