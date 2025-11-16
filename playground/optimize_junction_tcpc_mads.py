@@ -12,6 +12,7 @@ Nelder–Mead setup (which enables the optimiser-level memoisation flag).
 
 from __future__ import annotations
 
+import math
 import os
 import threading
 from typing import Dict, Tuple
@@ -23,6 +24,7 @@ from optilb.optimizers import MADSOptimizer
 
 # Reuse the proven objective pipeline and configuration from the Nelder–Mead run.
 from optimize_junction_tcpc import (  # type: ignore
+    GEOMETRY_PENALTY,
     LOWER,
     MAX_EVALS,
     UPPER,
@@ -56,6 +58,13 @@ def _memoized_objective(x: np.ndarray) -> float:
         print(f"[obj] cached value={cached:.6g} for x={key}", flush=True)
         return float(cached)
     value = float(_nm_objective(arr))
+    if not math.isfinite(value):
+        raise RuntimeError(f"Objective returned non-finite value {value} for x={key}")
+    if value >= GEOMETRY_PENALTY:
+        print(
+            f"[obj] constraint penalty triggered (value={value:.6g}) for x={key}",
+            flush=True,
+        )
     with _CACHE_LOCK:
         _OBJECTIVE_CACHE[key] = value
     print(f"[obj] evaluated value={value:.6g} for x={key}", flush=True)

@@ -41,16 +41,19 @@ Notes:
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import importlib.util
 import math
 import os
 import shutil
+import subprocess
+import threading
 import uuid
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -136,6 +139,14 @@ SLURM_POLL_INTERVAL = _env_float("TCPC_SLURM_POLL_INTERVAL", 60.0)
 SLURM_AVG_WINDOW = _env_float("TCPC_SLURM_AVG_WINDOW", 1.0)
 SLURM_VERBOSE = _env_bool("TCPC_SLURM_VERBOSE", False)
 
+# TCPC split checker configuration
+TCPC_SPLIT_SCRIPT = Path(__file__).resolve().parents[1] / "submodules" / "tnl-lbm" / "tcpc_split.py"
+TCPC_SPLIT_PVPYTHON = os.environ.get("TCPC_SPLIT_PVPYTHON", os.environ.get("PV_PYTHON", "pvpython"))
+TCPC_SPLIT_TIME_INDEX = int(os.environ.get("TCPC_SPLIT_TIME_INDEX", "-1"))
+TCPC_SPLIT_MIN_FRACTION = float(os.environ.get("TCPC_SPLIT_MIN_FRACTION", "0.25"))
+TCPC_SPLIT_WRITE_VTP = _env_bool("TCPC_SPLIT_WRITE_VTP", False)
+TCPC_SPLIT_WRITE_DEBUG_POINTS = _env_bool("TCPC_SPLIT_WRITE_DEBUG_POINTS", False)
+
 
 @dataclass(frozen=True)
 class Paths:
@@ -190,11 +201,23 @@ def _load_run_tcpc_module(script_path: Path):
     if not hasattr(module, "_codex_stage_registry"):
         module._codex_stage_registry = {}
 
+    if not hasattr(module, "_codex_run_dirs_by_thread"):
+        module._codex_run_dirs_by_thread = {}
+    if not hasattr(module, "_codex_run_dir_lock"):
+        module._codex_run_dir_lock = threading.Lock()
+
     if not getattr(module, "_codex_make_run_dir_patched", False):
         original_make_run_dir = getattr(module, "_make_run_dir")
 
         def _make_run_dir_with_staging(project_root: Path, filename: str) -> Path:
             run_dir = original_make_run_dir(project_root, filename)
+
+            lock = getattr(module, "_codex_run_dir_lock")
+            run_dir_map = getattr(module, "_codex_run_dirs_by_thread")
+            with lock:
+                queue = run_dir_map.setdefault(threading.get_ident(), [])
+                queue.append(run_dir)
+
             registry = getattr(module, "_codex_stage_registry", {})
             stage_queue = registry.get(filename)
             if stage_queue:
@@ -215,6 +238,145 @@ def _load_run_tcpc_module(script_path: Path):
         module._codex_make_run_dir_patched = True
 
     return module
+
+
+def _pop_tracked_run_dir(tcpc_module) -> Optional[Path]:
+    """Return the latest run directory registered for the current thread."""
+    lock = getattr(tcpc_module, "_codex_run_dir_lock", None)
+    run_dir_map = getattr(tcpc_module, "_codex_run_dirs_by_thread", None)
+    if lock is None or run_dir_map is None:
+        return None
+    ident = threading.get_ident()
+    with lock:
+        queue = run_dir_map.get(ident)
+        if not queue:
+            return None
+        run_dir = queue.pop(0)
+        if not queue:
+            run_dir_map.pop(ident, None)
+        return run_dir
+
+
+def _resolve_pvpython_executable() -> str:
+    """Return the pvpython executable path, raising if missing."""
+    candidate = Path(TCPC_SPLIT_PVPYTHON)
+    if candidate.is_file():
+        return str(candidate)
+    resolved = shutil.which(TCPC_SPLIT_PVPYTHON)
+    if resolved:
+        return resolved
+    raise FileNotFoundError(
+        f"pvpython executable '{TCPC_SPLIT_PVPYTHON}' not found. "
+        "Set TCPC_SPLIT_PVPYTHON or PV_PYTHON to a valid binary."
+    )
+
+
+def _invoke_tcpc_split(run_dir: Path, case_basename: str) -> Path:
+    """Run tcpc_split.py via pvpython and return the generated CSV path."""
+    if not TCPC_SPLIT_SCRIPT.is_file():
+        raise FileNotFoundError(f"tcpc_split.py not found at '{TCPC_SPLIT_SCRIPT}'")
+    pvpython_bin = _resolve_pvpython_executable()
+    case_stem = Path(case_basename).stem
+    results_dir = run_dir / f"results_sim_tcpc_res{RESOLUTION:02d}_{case_stem}"
+    bp_path = results_dir / "checkpoint.bp"
+    if not bp_path.is_file():
+        raise FileNotFoundError(f"Checkpoint '{bp_path}' not found for TCPC split.")
+    output_dir = run_dir / "tcpc_split" / case_stem
+    output_dir.mkdir(parents=True, exist_ok=True)
+    csv_name = f"{case_stem}_split.csv"
+    cmd = [
+        pvpython_bin,
+        str(TCPC_SPLIT_SCRIPT),
+        "--bp-file",
+        str(bp_path),
+        "--time-index",
+        str(TCPC_SPLIT_TIME_INDEX),
+        "--output-dir",
+        str(output_dir),
+        "--csv-basename",
+        csv_name,
+        "--quiet",
+    ]
+    cmd.append("--write-vtp" if TCPC_SPLIT_WRITE_VTP else "--no-write-vtp")
+    cmd.append("--write-debug-points" if TCPC_SPLIT_WRITE_DEBUG_POINTS else "--no-write-debug-points")
+    subprocess.run(cmd, check=True, cwd=run_dir)
+    csv_path = output_dir / csv_name
+    if not csv_path.is_file():
+        raise FileNotFoundError(f"tcpc_split did not produce CSV '{csv_path}'")
+    return csv_path
+
+
+def _load_split_rows(csv_path: Path) -> list[Dict[str, float | str]]:
+    """Parse the tcpc_split CSV rows into numeric dictionaries."""
+    rows: list[Dict[str, float | str]] = []
+    with csv_path.open("r", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for raw in reader:
+            row: Dict[str, float | str] = {}
+            for key, value in raw.items():
+                if key == "Source":
+                    row[key] = value or ""
+                    continue
+                try:
+                    row[key] = float(value) if value not in (None, "") else float("nan")
+                except (TypeError, ValueError):
+                    row[key] = float("nan")
+            rows.append(row)
+    if not rows:
+        raise ValueError(f"TCPC split CSV '{csv_path}' contained no rows.")
+    return rows
+
+
+def _aggregate_split(rows: list[Dict[str, float | str]]) -> tuple[float, float]:
+    """Return overall LPA/RPA fractions weighted by known streamlines."""
+    total_known = 0.0
+    total_lpa = 0.0
+    total_rpa = 0.0
+    for row in rows:
+        known_raw = row.get("Known")
+        lpa_raw = row.get("LPA")
+        rpa_raw = row.get("RPA")
+        known = known_raw if isinstance(known_raw, (int, float)) else float("nan")
+        lpa = lpa_raw if isinstance(lpa_raw, (int, float)) else float("nan")
+        rpa = rpa_raw if isinstance(rpa_raw, (int, float)) else float("nan")
+        if math.isnan(known):
+            continue
+        total_known += max(0.0, known)
+        if not math.isnan(lpa):
+            total_lpa += max(0.0, lpa)
+        if not math.isnan(rpa):
+            total_rpa += max(0.0, rpa)
+    if total_known <= 0.0:
+        return float("nan"), float("nan")
+    return total_lpa / total_known, total_rpa / total_known
+
+
+def _run_tcpc_split_check(tcpc_module, case_basename: str) -> tuple[bool, float, float, Path]:
+    """Execute tcpc_split and verify outlet fractions. Returns ok flag and CSV path."""
+    tcpc_run_dir = _pop_tracked_run_dir(tcpc_module)
+    if tcpc_run_dir is None:
+        raise RuntimeError("Unable to determine TCPC run directory for split evaluation.")
+    csv_path = _invoke_tcpc_split(tcpc_run_dir, case_basename)
+    rows = _load_split_rows(csv_path)
+    for row in rows:
+        source_raw = row.get("Source", "unknown")
+        source = source_raw if isinstance(source_raw, str) else str(source_raw)
+        frac_l = row.get("Frac_LPA")
+        frac_r = row.get("Frac_RPA")
+        frac_l_val = frac_l if isinstance(frac_l, (int, float)) else float("nan")
+        frac_r_val = frac_r if isinstance(frac_r, (int, float)) else float("nan")
+        print(
+            f"[split] {source} fractions: LPA={frac_l_val:.3f} RPA={frac_r_val:.3f}",
+            flush=True,
+        )
+    agg_lpa, agg_rpa = _aggregate_split(rows)
+    print(f"[split] aggregated fractions: LPA={agg_lpa:.3f}, RPA={agg_rpa:.3f}", flush=True)
+    ok = (
+        not (math.isnan(agg_lpa) or math.isnan(agg_rpa))
+        and agg_lpa >= TCPC_SPLIT_MIN_FRACTION
+        and agg_rpa >= TCPC_SPLIT_MIN_FRACTION
+    )
+    return ok, agg_lpa, agg_rpa, csv_path
 
 
 def _objective(x: np.ndarray) -> float:
@@ -295,9 +457,25 @@ def _objective(x: np.ndarray) -> float:
                 "Check runs under submodules/tnl-lbm/runs_tcpc/ for diagnostics."
             )
 
+        try:
+            split_ok, agg_lpa, agg_rpa, csv_path = _run_tcpc_split_check(tcpc_module, generated_basename)
+        except Exception as exc:
+            raise RuntimeError(
+                f"TCPC split evaluation failed for '{generated_basename}': {exc}"
+            ) from exc
+
+        result_value = float(value)
+        if not split_ok:
+            print(
+                f"[obj] TCPC split violation: aggregated LPA={agg_lpa:.3f}, "
+                f"RPA={agg_rpa:.3f} (threshold={TCPC_SPLIT_MIN_FRACTION}, csv={csv_path})",
+                flush=True,
+            )
+            result_value = float(GEOMETRY_PENALTY)
+
         cleanup_geometry = True
         cleanup_run_dir = True
-        return float(value)
+        return result_value
     finally:
         if cleanup_geometry and staged_files:
             for path in staged_files.values():
