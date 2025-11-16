@@ -71,15 +71,19 @@ def prepare_run_directory(project_root: Path, case_basename: str) -> Path:
     stem = Path(case_basename).stem or "case"
     sanitized = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in stem)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    candidate = runs_root / f"{sanitized}_{timestamp}"
 
     suffix = 0
-    while candidate.exists():
-        suffix += 1
-        candidate = runs_root / f"{sanitized}_{timestamp}_{suffix:02d}"
-
-    candidate.mkdir(parents=True, exist_ok=False)
-    return candidate
+    while True:
+        candidate = runs_root / (
+            f"{sanitized}_{timestamp}" if suffix == 0 else f"{sanitized}_{timestamp}_{suffix:02d}"
+        )
+        try:
+            candidate.mkdir(parents=True, exist_ok=False)
+            return candidate
+        except FileExistsError:
+            # Another worker grabbed the same second-resolution name; try the next suffix.
+            suffix += 1
+            continue
 
 
 def generate_geometry(output_dir: Path, case_name: str | None, *, resolution: int, lower_angle: float,
