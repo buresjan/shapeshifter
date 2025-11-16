@@ -74,15 +74,15 @@ from run_junction_tcpc import (
 # Fixed configuration (edit here, no CLI)
 # ---------------------------------------------------------------------------
 RESOLUTION = 4
-MAX_EVALS = 40
+MAX_EVALS = 50
 
 # Initial point (offset, lower_angle, upper_angle, lower_flare, upper_flare)
 # Geometry union is only robust when branches stay close to the stem.
-X0 = np.array([0.0, 0.0, 0.0, 0.00075, 0.00075], dtype=float)
+X0 = np.array([0.001, 4.0, -3.0, 0.001, 0.001], dtype=float)
 
 # Bounds
-LOWER = np.array([-0.005, -10.0, -10.0, 0.000, 0.000], dtype=float)
-UPPER = np.array([+0.005, +10.0, +10.0, 0.0015, 0.0015], dtype=float)
+LOWER = np.array([-0.01, -15.0, -15.0, 0.000, 0.000], dtype=float)
+UPPER = np.array([+0.01, +15.0, +15.0, 0.0025, 0.0025], dtype=float)
 
 # Penalised objective value when geometry cannot be generated
 GEOMETRY_PENALTY = 1.0e9
