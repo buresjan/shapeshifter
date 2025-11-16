@@ -118,6 +118,16 @@ def main() -> Tuple[np.ndarray, float]:
         print(f"  runtime   = {problem.log.runtime:.2f} s")
         print(f"  early     = {problem.log.early_stopped}")
 
+    evaluations = getattr(res, "evaluations", ()) or ()
+    if evaluations:
+        names = space.names or tuple(f"x{i}" for i in range(space.dimension))
+        print(f"[opt] Evaluation log ({len(evaluations)} entries):")
+        for idx, record in enumerate(evaluations, start=1):
+            coords = ", ".join(
+                f"{name}={float(val):.6g}" for name, val in zip(names, record.x)
+            )
+            print(f"  - eval {idx:03d}: f={record.value:.6g}; {coords}")
+
     return best_x, best_f
 
 

@@ -417,6 +417,7 @@ def _objective(x: np.ndarray) -> float:
         )
     except Exception as exc:
         print(f"[obj] geometry failed: {exc}", flush=True)
+        print(f"[obj] returning penalty value={GEOMETRY_PENALTY:.6g}", flush=True)
         shutil.rmtree(workspace, ignore_errors=True)
         shutil.rmtree(run_dir, ignore_errors=True)
         return float(GEOMETRY_PENALTY)
@@ -472,6 +473,11 @@ def _objective(x: np.ndarray) -> float:
                 flush=True,
             )
             result_value = float(GEOMETRY_PENALTY)
+
+        print(
+            f"[obj] completed case={generated_basename} raw={float(value):.6g} final={result_value:.6g}",
+            flush=True,
+        )
 
         cleanup_geometry = True
         cleanup_run_dir = True
@@ -531,6 +537,16 @@ def main() -> Tuple[np.ndarray, float]:
         print(f"  nfev      = {problem.log.nfev}")
         print(f"  runtime   = {problem.log.runtime:.2f} s")
         print(f"  early     = {problem.log.early_stopped}")
+
+    evaluations = getattr(res, "evaluations", ()) or ()
+    if evaluations:
+        names = space.names or tuple(f"x{i}" for i in range(space.dimension))
+        print(f"[opt] Evaluation log ({len(evaluations)} entries):")
+        for idx, record in enumerate(evaluations, start=1):
+            coords = ", ".join(
+                f"{name}={float(val):.6g}" for name, val in zip(names, record.x)
+            )
+            print(f"  - eval {idx:03d}: f={record.value:.6g}; {coords}")
 
     return best_x, best_f
 
