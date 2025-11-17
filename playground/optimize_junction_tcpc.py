@@ -488,6 +488,13 @@ def _objective(x: np.ndarray) -> float:
             flush=True,
         )
 
+        # Mirror the verbose tracing used by the MADS wrapper so optimisation logs
+        # clearly show each evaluated point and its objective value.
+        print(
+            f"[obj] evaluated value={result_value:.6g} for x={tuple(map(float, x))}",
+            flush=True,
+        )
+
         cleanup_geometry = True
         cleanup_run_dir = True
         return result_value
