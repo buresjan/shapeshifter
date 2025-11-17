@@ -102,6 +102,15 @@ _RUN_TAG = _sanitize_tag(_RUN_TAG)
 if _RUN_TAG:
     _RUN_TAG = f"{_RUN_TAG}_"
 
+# Force a specific Open MPI accelerator backend to avoid CUDA/ROCm clashes on
+# mixed nodes. Exporting OMPI_MCA_accelerator propagates into the sbatch job.
+MPI_ACCELERATOR = (
+    os.environ.get("TCPC_MPI_ACCELERATOR")
+    or os.environ.get("OMPI_MCA_accelerator")
+    or "cuda"
+)
+os.environ["OMPI_MCA_accelerator"] = MPI_ACCELERATOR
+
 # Slurm submission defaults (override via environment variables if desired)
 def _env_optional_int(var: str, default: int | None) -> int | None:
     raw = os.environ.get(var)
