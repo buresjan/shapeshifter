@@ -302,6 +302,94 @@ def _load_run_tcpc_module(script_path: Path):
         module._make_run_dir = _make_run_dir_with_staging  # type: ignore[attr-defined]
         module._codex_make_run_dir_patched = True
 
+    if not getattr(module, "_codex_write_sbatch_patched", False):
+        import shlex as _shlex  # local import to avoid relying on module globals
+
+        def _write_sbatch_with_local_root(
+            *,
+            run_dir: Path,
+            solver_binary: Path,
+            resolution: int,
+            filename: str,
+            partition: str | None,
+            gpus: int | None,
+            cpus: int | None,
+            mem: str | None,
+            walltime: str,
+            project_root: Path,
+        ) -> Path:
+            """Copy of tnl-lbm _write_sbatch that binds TNL_LBM_DATA_ROOT to run_dir/sim_NSE."""
+            job_name = module._job_name(run_dir.name)
+            lines = [
+                "#!/bin/bash",
+                f"#SBATCH --job-name={job_name}",
+                "#SBATCH --output=slurm.out",
+                "#SBATCH --error=slurm.err",
+                f"#SBATCH --time={walltime}",
+            ]
+            if partition:
+                lines.append(f"#SBATCH --partition={partition}")
+            if gpus is not None:
+                lines.append(f"#SBATCH --gpus={gpus}")
+            if cpus is not None:
+                lines.append(f"#SBATCH --cpus-per-task={cpus}")
+            if mem:
+                lines.append(f"#SBATCH --mem={mem}")
+
+            data_root = run_dir / "sim_NSE"
+            data_root.mkdir(parents=True, exist_ok=True)
+            tmp_dir = data_root / "tmp"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+
+            solver_quoted = _shlex.quote(str(solver_binary.resolve()))
+            filename_quoted = _shlex.quote(filename)
+            data_root_quoted = _shlex.quote(str(data_root.resolve()))
+            tmp_dir_rel = Path("sim_NSE") / "tmp"
+            tmp_dir_quoted = _shlex.quote(str(tmp_dir_rel))
+            result_basename = f"val_{Path(filename).name}"
+            result_basename_quoted = _shlex.quote(result_basename)
+            resolution_literal = str(resolution)
+
+            body = (
+                f"""set -euo pipefail
+cd "$SLURM_SUBMIT_DIR"
+
+SOLVER_BINARY={solver_quoted}
+INPUT_FILENAME={filename_quoted}
+RESOLUTION={resolution_literal}
+TMP_DIR={tmp_dir_quoted}
+RESULT_BASENAME={result_basename_quoted}
+DATA_ROOT={data_root_quoted}
+
+export TNL_LBM_DATA_ROOT="$DATA_ROOT"
+
+mkdir -p "$TMP_DIR"
+rm -f "$TMP_DIR/$RESULT_BASENAME"
+
+if [ ! -x "$SOLVER_BINARY" ]; then
+    echo "Solver binary $SOLVER_BINARY is missing or not executable." >&2
+    exit 3
+fi
+
+echo "sim_tcpc_2 start $(date --iso-8601=seconds)" >&2
+"$SOLVER_BINARY" "$RESOLUTION" "$INPUT_FILENAME"
+echo "sim_tcpc_2 end $(date --iso-8601=seconds)" >&2
+
+RESULT_PATH="$TMP_DIR/$RESULT_BASENAME"
+if [ ! -f "$RESULT_PATH" ]; then
+    echo "Result file $RESULT_PATH not produced" >&2
+    exit 2
+fi
+"""
+            )
+            script_text = "\n".join(lines + ["", body])
+            sbatch_path = run_dir / "job.sbatch"
+            sbatch_path.write_text(script_text, encoding="ascii")
+            return sbatch_path
+
+        module._write_sbatch = _write_sbatch_with_local_root  # type: ignore[attr-defined]
+        module._codex_write_sbatch_patched = True
+
     return module
 
 
@@ -472,7 +560,12 @@ def _objective(
     offset, lower_angle, upper_angle, lower_flare, upper_flare = map(float, x)
 
     case_tag = _hash_params(x)
-    case_stem = f"{_RUN_TAG}junction_{case_tag}" if _RUN_TAG else f"junction_{case_tag}"
+    algo_label = _sanitize_tag(algorithm) if algorithm else "run"
+    case_stem = (
+        f"{_RUN_TAG}{algo_label}_junction_{case_tag}"
+        if _RUN_TAG
+        else f"{algo_label}_junction_{case_tag}"
+    )
     case_name = ensure_txt_suffix(f"{case_stem}.txt")
     generated_basename = Path(case_name).name
 
