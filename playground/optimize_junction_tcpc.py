@@ -531,29 +531,51 @@ def _objective(
         staged_files = stage_geometry(to_stage, data_root)
 
         run_tcpc = tcpc_module.run_tcpc_simulation  # type: ignore[attr-defined]
-        value = run_tcpc(
-            generated_basename,
-            resolution=RESOLUTION,
-            project_root=p.solver_root,
-            binary_path=p.solver_binary,
-            partition=SLURM_PARTITION,
-            gpus=SLURM_GPUS,
-            cpus=SLURM_CPUS,
-            mem=SLURM_MEM,
-            walltime=SLURM_WALLTIME,
-            poll_interval=SLURM_POLL_INTERVAL,
-            default_on_failure=float("nan"),
-            avg_window=SLURM_AVG_WINDOW,
-            verbose=SLURM_VERBOSE,
-        )
+        try:
+            value = run_tcpc(
+                generated_basename,
+                resolution=RESOLUTION,
+                project_root=p.solver_root,
+                binary_path=p.solver_binary,
+                partition=SLURM_PARTITION,
+                gpus=SLURM_GPUS,
+                cpus=SLURM_CPUS,
+                mem=SLURM_MEM,
+                walltime=SLURM_WALLTIME,
+                poll_interval=SLURM_POLL_INTERVAL,
+                default_on_failure=float("nan"),
+                avg_window=SLURM_AVG_WINDOW,
+                verbose=SLURM_VERBOSE,
+            )
+        except Exception as exc:
+            _discard_failed_run_dir(tcpc_module)
+            result_value = float(GEOMETRY_PENALTY)
+            log_path = _log_eval(algorithm, eval_id, x, result_value)
+            print(
+                f"[obj] TCPC Slurm run failed for case '{generated_basename}': {exc}",
+                flush=True,
+            )
+            print(
+                f"[obj] returning penalty value={GEOMETRY_PENALTY:.6g} (eval {eval_id:04d}, log={log_path})",
+                flush=True,
+            )
+            cleanup_geometry = True
+            cleanup_run_dir = True
+            return result_value
         if math.isnan(value):
             # The solver job failed; drop the queued run_dir so the next
             # evaluation does not try to run tcpc_split on the stale path.
             _discard_failed_run_dir(tcpc_module)
-            raise RuntimeError(
-                f"TCPC Slurm run for case '{generated_basename}' returned NaN. "
-                "Check runs under submodules/tnl-lbm/runs_tcpc/ for diagnostics."
+            result_value = float(GEOMETRY_PENALTY)
+            log_path = _log_eval(algorithm, eval_id, x, result_value)
+            print(
+                f"[obj] TCPC Slurm run for case '{generated_basename}' returned NaN; "
+                f"applying penalty (eval {eval_id:04d}, log={log_path})",
+                flush=True,
             )
+            cleanup_geometry = True
+            cleanup_run_dir = True
+            return result_value
 
         cleanup_run_dir = True  # remove the run dir even if the split check fails
         try:
