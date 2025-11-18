@@ -51,6 +51,7 @@ import subprocess
 import threading
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -75,6 +76,7 @@ from run_junction_tcpc import (
 # ---------------------------------------------------------------------------
 RESOLUTION = 4
 MAX_EVALS = 50
+PARAMETER_NAMES = ("offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare")
 
 # Initial point (offset, lower_angle, upper_angle, lower_flare, upper_flare)
 # Geometry union is only robust when branches stay close to the stem.
@@ -155,6 +157,60 @@ TCPC_SPLIT_TIME_INDEX = int(os.environ.get("TCPC_SPLIT_TIME_INDEX", "-1"))
 TCPC_SPLIT_MIN_FRACTION = float(os.environ.get("TCPC_SPLIT_MIN_FRACTION", "0.25"))
 TCPC_SPLIT_WRITE_VTP = _env_bool("TCPC_SPLIT_WRITE_VTP", False)
 TCPC_SPLIT_WRITE_DEBUG_POINTS = _env_bool("TCPC_SPLIT_WRITE_DEBUG_POINTS", False)
+
+
+# ---------------------------------------------------------------------------
+# Evaluation logging (shared with the MADS wrapper)
+# ---------------------------------------------------------------------------
+_EVAL_LOCK = threading.Lock()
+_EVAL_COUNTERS: Dict[str, int] = {}
+_EVAL_LOG_PATHS: Dict[str, Path] = {}
+_EVAL_TIMESTAMP = datetime.now().strftime("%Y%m%d-%H%M%S")
+_EVAL_LOG_ROOT = Path(__file__).resolve().parents[1] / "tmp" / "junction_tcpc_logs"
+
+
+def _next_eval_id(algorithm: str) -> int:
+    """Return a monotonically increasing evaluation id per algorithm name."""
+    with _EVAL_LOCK:
+        current = _EVAL_COUNTERS.get(algorithm, 0) + 1
+        _EVAL_COUNTERS[algorithm] = current
+        return current
+
+
+def _log_eval(algorithm: str, eval_id: int, x: np.ndarray, value: float) -> Path:
+    """Append an evaluation record to the per-run CSV log and return its path."""
+    log_dir = _EVAL_LOG_ROOT
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with _EVAL_LOCK:
+        path = _EVAL_LOG_PATHS.get(algorithm)
+        if path is None:
+            run_label = f"{_RUN_TAG}{algorithm}" if _RUN_TAG else algorithm
+            run_label = run_label.strip("_") or algorithm
+            path = log_dir / f"{run_label}_{_EVAL_TIMESTAMP}.csv"
+            _EVAL_LOG_PATHS[algorithm] = path
+
+        new_file = not path.exists()
+        with path.open("a", newline="") as handle:
+            writer = csv.writer(handle)
+            if new_file:
+                writer.writerow(
+                    ("eval_id", "objective", *PARAMETER_NAMES, "timestamp_iso8601")
+                )
+            writer.writerow(
+                (
+                    eval_id,
+                    float(value),
+                    *[float(v) for v in np.asarray(x, dtype=float)],
+                    datetime.now().isoformat(),
+                )
+            )
+        return path
+
+
+def _current_eval_log_path(algorithm: str) -> Optional[Path]:
+    """Return the log path if at least one evaluation was recorded."""
+    with _EVAL_LOCK:
+        return _EVAL_LOG_PATHS.get(algorithm)
 
 
 @dataclass(frozen=True)
@@ -266,6 +322,17 @@ def _pop_tracked_run_dir(tcpc_module) -> Optional[Path]:
         return run_dir
 
 
+def _discard_failed_run_dir(tcpc_module) -> None:
+    """Drop and delete the most recent run dir if a solver job failed."""
+    failed_dir = _pop_tracked_run_dir(tcpc_module)
+    if failed_dir is None:
+        return
+    try:
+        shutil.rmtree(failed_dir, ignore_errors=True)
+    except OSError:
+        pass
+
+
 def _resolve_pvpython_executable() -> str:
     """Return the pvpython executable path, raising if missing."""
     candidate = Path(TCPC_SPLIT_PVPYTHON)
@@ -287,9 +354,16 @@ def _invoke_tcpc_split(run_dir: Path, case_basename: str) -> Path:
     pvpython_bin = _resolve_pvpython_executable()
     case_stem = Path(case_basename).stem
     results_dir = run_dir / f"results_sim_tcpc_res{RESOLUTION:02d}_{case_stem}"
-    bp_path = results_dir / "checkpoint.bp"
-    if not bp_path.is_file():
-        raise FileNotFoundError(f"Checkpoint '{bp_path}' not found for TCPC split.")
+    preferred_bp = results_dir / "output_3D.bp"
+    if preferred_bp.is_file():
+        bp_path = preferred_bp
+    else:
+        bp_candidates = sorted(results_dir.glob("*.bp"))
+        if not bp_candidates:
+            raise FileNotFoundError(
+                f"No .bp file found for TCPC split inside '{results_dir}'."
+            )
+        bp_path = bp_candidates[0]
     output_dir = run_dir / "tcpc_split" / case_stem
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_name = f"{case_stem}_split.csv"
@@ -388,8 +462,11 @@ def _run_tcpc_split_check(tcpc_module, case_basename: str) -> tuple[bool, float,
     return ok, agg_lpa, agg_rpa, csv_path
 
 
-def _objective(x: np.ndarray) -> float:
+def _objective(
+    x: np.ndarray, *, algorithm: str = "nelder_mead", eval_id: Optional[int] = None
+) -> float:
     """Objective wrapper: generate geometry, run solver, return scalar."""
+    eval_id = eval_id if eval_id is not None else _next_eval_id(algorithm)
     p = _project_paths()
 
     offset, lower_angle, upper_angle, lower_flare, upper_flare = map(float, x)
@@ -412,6 +489,9 @@ def _objective(x: np.ndarray) -> float:
     run_dir = prepare_run_directory(p.project_root, generated_basename)
     workspace = run_dir / "meshgen_output"
 
+    result_value: float | None = None
+    log_path: Optional[Path] = None
+
     try:
         files, generated_case_name = generate_geometry(
             workspace,
@@ -426,10 +506,15 @@ def _objective(x: np.ndarray) -> float:
         )
     except Exception as exc:
         print(f"[obj] geometry failed: {exc}", flush=True)
-        print(f"[obj] returning penalty value={GEOMETRY_PENALTY:.6g}", flush=True)
+        result_value = float(GEOMETRY_PENALTY)
+        log_path = _log_eval(algorithm, eval_id, x, result_value)
+        print(
+            f"[obj] returning penalty value={GEOMETRY_PENALTY:.6g} (eval {eval_id:04d}, log={log_path})",
+            flush=True,
+        )
         shutil.rmtree(workspace, ignore_errors=True)
         shutil.rmtree(run_dir, ignore_errors=True)
-        return float(GEOMETRY_PENALTY)
+        return result_value
     generated_basename = Path(generated_case_name).name
 
     staged_files: Dict[str, Path] = {}
@@ -462,17 +547,28 @@ def _objective(x: np.ndarray) -> float:
             verbose=SLURM_VERBOSE,
         )
         if math.isnan(value):
+            # The solver job failed; drop the queued run_dir so the next
+            # evaluation does not try to run tcpc_split on the stale path.
+            _discard_failed_run_dir(tcpc_module)
             raise RuntimeError(
                 f"TCPC Slurm run for case '{generated_basename}' returned NaN. "
                 "Check runs under submodules/tnl-lbm/runs_tcpc/ for diagnostics."
             )
 
+        cleanup_run_dir = True  # remove the run dir even if the split check fails
         try:
-            split_ok, agg_lpa, agg_rpa, csv_path = _run_tcpc_split_check(tcpc_module, generated_basename)
+            split_ok, agg_lpa, agg_rpa, csv_path = _run_tcpc_split_check(
+                tcpc_module, generated_basename
+            )
         except Exception as exc:
-            raise RuntimeError(
-                f"TCPC split evaluation failed for '{generated_basename}': {exc}"
-            ) from exc
+            split_ok = False
+            agg_lpa = float("nan")
+            agg_rpa = float("nan")
+            csv_path = None
+            print(
+                f"[obj] TCPC split evaluation failed for '{generated_basename}': {exc}",
+                flush=True,
+            )
 
         result_value = float(value)
         if not split_ok:
@@ -487,11 +583,9 @@ def _objective(x: np.ndarray) -> float:
             f"[obj] completed case={generated_basename} raw={float(value):.6g} final={result_value:.6g}",
             flush=True,
         )
-
-        # Mirror the verbose tracing used by the MADS wrapper so optimisation logs
-        # clearly show each evaluated point and its objective value.
+        log_path = _log_eval(algorithm, eval_id, x, result_value)
         print(
-            f"[obj] evaluated value={result_value:.6g} for x={tuple(map(float, x))}",
+            f"[obj] eval {eval_id:04d} value={result_value:.6g} x={tuple(map(float, x))} (log={log_path})",
             flush=True,
         )
 
@@ -512,9 +606,7 @@ def _objective(x: np.ndarray) -> float:
 
 
 def main() -> Tuple[np.ndarray, float]:
-    space = DesignSpace(lower=LOWER, upper=UPPER, names=(
-        "offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare"
-    ))
+    space = DesignSpace(lower=LOWER, upper=UPPER, names=PARAMETER_NAMES)
 
     from optilb.optimizers import NelderMeadOptimizer
 
@@ -563,6 +655,9 @@ def main() -> Tuple[np.ndarray, float]:
                 f"{name}={float(val):.6g}" for name, val in zip(names, record.x)
             )
             print(f"  - eval {idx:03d}: f={record.value:.6g}; {coords}")
+    log_path = _current_eval_log_path("nelder_mead")
+    if log_path is not None:
+        print(f"[opt] Evaluation CSV log saved to: {log_path}")
 
     return best_x, best_f
 

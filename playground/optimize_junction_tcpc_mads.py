@@ -27,9 +27,13 @@ from optimize_junction_tcpc import (  # type: ignore
     GEOMETRY_PENALTY,
     LOWER,
     MAX_EVALS,
+    PARAMETER_NAMES,
     UPPER,
     X0,
     _objective as _nm_objective,
+    _current_eval_log_path,
+    _log_eval,
+    _next_eval_id,
 )
 
 
@@ -52,12 +56,17 @@ def _memoized_objective(x: np.ndarray) -> float:
 
     arr = np.asarray(x, dtype=float)
     key = tuple(float(v) for v in arr)
+    eval_id = _next_eval_id("mads")
     with _CACHE_LOCK:
         cached = _OBJECTIVE_CACHE.get(key)
     if cached is not None:
-        print(f"[obj] cached value={cached:.6g} for x={key}", flush=True)
+        log_path = _log_eval("mads", eval_id, arr, cached)
+        print(
+            f"[obj] eval {eval_id:04d} cached value={cached:.6g} for x={key} (log={log_path})",
+            flush=True,
+        )
         return float(cached)
-    value = float(_nm_objective(arr))
+    value = float(_nm_objective(arr, algorithm="mads", eval_id=eval_id))
     if not math.isfinite(value):
         raise RuntimeError(f"Objective returned non-finite value {value} for x={key}")
     if value >= GEOMETRY_PENALTY:
@@ -67,7 +76,6 @@ def _memoized_objective(x: np.ndarray) -> float:
         )
     with _CACHE_LOCK:
         _OBJECTIVE_CACHE[key] = value
-    print(f"[obj] evaluated value={value:.6g} for x={key}", flush=True)
     return value
 
 
@@ -80,9 +88,7 @@ def main() -> Tuple[np.ndarray, float]:
             "PyNomad (PyNomadBBO) is required for the MADS optimiser but is not installed."
         )
 
-    space = DesignSpace(lower=LOWER, upper=UPPER, names=(
-        "offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare"
-    ))
+    space = DesignSpace(lower=LOWER, upper=UPPER, names=PARAMETER_NAMES)
 
     mads = MADSOptimizer(
         n_workers=N_WORKERS,
@@ -127,6 +133,9 @@ def main() -> Tuple[np.ndarray, float]:
                 f"{name}={float(val):.6g}" for name, val in zip(names, record.x)
             )
             print(f"  - eval {idx:03d}: f={record.value:.6g}; {coords}")
+    log_path = _current_eval_log_path("mads")
+    if log_path is not None:
+        print(f"[opt] Evaluation CSV log saved to: {log_path}")
 
     return best_x, best_f
 
