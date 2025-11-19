@@ -12,6 +12,8 @@ delegates to the original ``tcpc_split.py`` entry point inside ``tnl-lbm``.
 from __future__ import annotations
 
 import importlib
+import os
+import posixpath
 import runpy
 import sys
 from pathlib import Path
@@ -61,8 +63,42 @@ def _ensure_vtk_stubs() -> None:
         _ensure_optional_vtk_module(module_name, tokens)
 
 
+def _patch_adios_bp_detection(argv: list[str]) -> None:
+    """Allow tcpc_split's '--bp-file' check to accept ADIOS directory datasets."""
+
+    bp_dirs: set[Path] = set()
+    it = iter(range(len(argv)))
+    for idx in it:
+        token = argv[idx]
+        if token == "--bp-file" and idx + 1 < len(argv):
+            raw = Path(argv[idx + 1])
+            try:
+                resolved = raw.resolve()
+            except OSError:
+                resolved = raw
+            if resolved.is_dir():
+                bp_dirs.add(resolved)
+    if not bp_dirs:
+        return
+
+    original_isfile = posixpath.isfile
+
+    def _patched_isfile(path: str | os.PathLike[str]) -> bool:
+        try:
+            resolved = Path(path).resolve()
+        except OSError:
+            resolved = Path(path)
+        if resolved in bp_dirs:
+            return True
+        return original_isfile(path)
+
+    posixpath.isfile = _patched_isfile  # type: ignore[assignment]
+    os.path.isfile = _patched_isfile
+
+
 def main() -> None:
     _ensure_vtk_stubs()
+    _patch_adios_bp_detection(sys.argv)
 
     repo_root = Path(__file__).resolve().parents[1]
     split_script = repo_root / "submodules" / "tnl-lbm" / "tcpc_split.py"
