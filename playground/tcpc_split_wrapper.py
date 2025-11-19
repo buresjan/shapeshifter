@@ -41,24 +41,24 @@ def _ensure_optional_vtk_module(module_name: str, missing_tokens: tuple[str, ...
     sys.modules[module_name] = stub
 
 
+_VTK_OPTIONAL_MODULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("vtkmodules.vtkRenderingOpenXR", ("libopenxr_loader.so", "libopenxr_loader.so.1")),
+    ("vtkmodules.vtkRenderingOpenVR", ("libopenvr_api.so", "libopenvr_api.so.1")),
+    ("vtkmodules.vtkRenderingAnari", ("libanari.so", "libanari.so.0")),
+    ("vtkmodules.vtkIOMySQL", ("libmariadb.so", "libmariadb.so.3")),
+    ("vtkmodules.vtkIOExportPDF", ("libhpdf.so", "libhpdf.so.2.4")),
+    ("vtkmodules.vtkIOAlembic", ("libAlembic.so", "libAlembic.so.1.8")),
+    ("vtkmodules.vtkIOODBC", ("libodbc.so", "libodbc.so.2")),
+    ("vtkmodules.vtkIOExportGL2PS", ("libgl2ps.so", "libgl2ps.so.1")),
+    ("vtkmodules.vtkIOExodus", ("libexodus.so", "libexodus.so.0")),
+)
+
+
 def _ensure_vtk_stubs() -> None:
     """Make optional VTK runtimes importable when their libs are missing."""
 
-    _ensure_optional_vtk_module(
-        "vtkmodules.vtkRenderingOpenXR", ("libopenxr_loader.so", "libopenxr_loader.so.1")
-    )
-    _ensure_optional_vtk_module(
-        "vtkmodules.vtkRenderingOpenVR", ("libopenvr_api.so", "libopenvr_api.so.1")
-    )
-    _ensure_optional_vtk_module(
-        "vtkmodules.vtkRenderingAnari", ("libanari.so", "libanari.so.0")
-    )
-    _ensure_optional_vtk_module(
-        "vtkmodules.vtkIOMySQL", ("libmariadb.so", "libmariadb.so.3")
-    )
-    _ensure_optional_vtk_module(
-        "vtkmodules.vtkIOExportPDF", ("libhpdf.so", "libhpdf.so.2.4")
-    )
+    for module_name, tokens in _VTK_OPTIONAL_MODULES:
+        _ensure_optional_vtk_module(module_name, tokens)
 
 
 def main() -> None:
