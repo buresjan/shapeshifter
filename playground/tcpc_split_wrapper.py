@@ -50,6 +50,9 @@ def _ensure_vtk_stubs() -> None:
     _ensure_optional_vtk_module(
         "vtkmodules.vtkRenderingOpenVR", ("libopenvr_api.so", "libopenvr_api.so.1")
     )
+    _ensure_optional_vtk_module(
+        "vtkmodules.vtkRenderingAnari", ("libanari.so", "libanari.so.0")
+    )
 
 
 def main() -> None:
