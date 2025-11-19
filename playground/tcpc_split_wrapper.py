@@ -18,25 +18,22 @@ from pathlib import Path
 from types import ModuleType
 
 
-def _ensure_vtk_openxr_stub() -> None:
-    """Make ``vtkmodules.vtkRenderingOpenXR`` importable without libopenxr."""
+def _ensure_optional_vtk_module(module_name: str, missing_tokens: tuple[str, ...]) -> None:
+    """Install an empty stub for ``module_name`` if its shared libs are absent."""
 
-    module_name = "vtkmodules.vtkRenderingOpenXR"
     if module_name in sys.modules:
         return
 
     try:
         importlib.import_module(module_name)
-        return  # OpenXR module is available; nothing else to do.
+        return
     except ModuleNotFoundError:
         pass
     except ImportError as exc:
-        # Only swallow the missing loader error; re-raise other issues.
-        if "libopenxr_loader.so.1" not in str(exc):
+        text = str(exc)
+        if not any(token in text for token in missing_tokens):
             raise
 
-    # Remove any partially imported module and install an empty stub to satisfy
-    # ``import vtk``. The TCPC split script never touches the OpenXR symbols.
     sys.modules.pop(module_name, None)
     stub = ModuleType(module_name)
     stub.__all__ = []
@@ -44,8 +41,19 @@ def _ensure_vtk_openxr_stub() -> None:
     sys.modules[module_name] = stub
 
 
+def _ensure_vtk_stubs() -> None:
+    """Make optional VTK runtimes importable when their libs are missing."""
+
+    _ensure_optional_vtk_module(
+        "vtkmodules.vtkRenderingOpenXR", ("libopenxr_loader.so", "libopenxr_loader.so.1")
+    )
+    _ensure_optional_vtk_module(
+        "vtkmodules.vtkRenderingOpenVR", ("libopenvr_api.so", "libopenvr_api.so.1")
+    )
+
+
 def main() -> None:
-    _ensure_vtk_openxr_stub()
+    _ensure_vtk_stubs()
 
     repo_root = Path(__file__).resolve().parents[1]
     split_script = repo_root / "submodules" / "tnl-lbm" / "tcpc_split.py"
