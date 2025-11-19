@@ -16,7 +16,12 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Mirror the optimisation launchers: resolve the repo relative to the submit dir.
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+    REPO_ROOT="$(realpath "${SLURM_SUBMIT_DIR}")"
+else
+    REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
 DEFAULT_RUN_DIR="${REPO_ROOT}/submodules/tnl-lbm/runs_tcpc/run_33133a2e_junction_dcde89c39477_20251117-080134"
 DEFAULT_CASE_STEM="run_33133a2e_junction_dcde89c39477"
 DEFAULT_LABEL="wrapper_test"
@@ -25,7 +30,6 @@ RUN_DIR="${1:-${DEFAULT_RUN_DIR}}"
 CASE_STEM="${2:-${DEFAULT_CASE_STEM}}"
 OUTPUT_LABEL="${3:-${DEFAULT_LABEL}}"
 
-PY_BIN="${REPO_ROOT}/.venv/bin/python"
 TEST_SCRIPT="${REPO_ROOT}/playground/test_tcpc_split.py"
 
 CMD_ARGS=(--run-dir "${RUN_DIR}" --output-label "${OUTPUT_LABEL}")
@@ -36,7 +40,7 @@ fi
 echo "Run dir:    ${RUN_DIR}"
 echo "Case stem:  ${CASE_STEM:-<auto>}"
 echo "Label:      ${OUTPUT_LABEL}"
-echo "Python bin: ${PY_BIN}"
 echo "Helper:     ${TEST_SCRIPT}"
 
-"${PY_BIN}" "${TEST_SCRIPT}" "${CMD_ARGS[@]}"
+cd "${REPO_ROOT}"
+python3 "${TEST_SCRIPT}" "${CMD_ARGS[@]}"
