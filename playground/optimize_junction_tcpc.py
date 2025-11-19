@@ -151,7 +151,10 @@ SLURM_AVG_WINDOW = _env_float("TCPC_SLURM_AVG_WINDOW", 1.0)
 SLURM_VERBOSE = _env_bool("TCPC_SLURM_VERBOSE", False)
 
 # TCPC split checker configuration
-TCPC_SPLIT_SCRIPT = Path(__file__).resolve().parents[1] / "submodules" / "tnl-lbm" / "tcpc_split.py"
+_TNLLBM_ROOT = Path(__file__).resolve().parents[1] / "submodules" / "tnl-lbm"
+_SPLIT_WRAPPER = Path(__file__).resolve().parent / "tcpc_split_wrapper.py"
+_DEFAULT_SPLIT_SCRIPT = _SPLIT_WRAPPER if _SPLIT_WRAPPER.is_file() else (_TNLLBM_ROOT / "tcpc_split.py")
+TCPC_SPLIT_SCRIPT = Path(os.environ.get("TCPC_SPLIT_SCRIPT", str(_DEFAULT_SPLIT_SCRIPT)))
 TCPC_SPLIT_PVPYTHON = os.environ.get("TCPC_SPLIT_PVPYTHON", os.environ.get("PV_PYTHON", "pvpython"))
 TCPC_SPLIT_TIME_INDEX = int(os.environ.get("TCPC_SPLIT_TIME_INDEX", "-1"))
 TCPC_SPLIT_MIN_FRACTION = float(os.environ.get("TCPC_SPLIT_MIN_FRACTION", "0.25"))
