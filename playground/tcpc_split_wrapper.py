@@ -53,6 +53,9 @@ def _ensure_vtk_stubs() -> None:
     _ensure_optional_vtk_module(
         "vtkmodules.vtkRenderingAnari", ("libanari.so", "libanari.so.0")
     )
+    _ensure_optional_vtk_module(
+        "vtkmodules.vtkIOMySQL", ("libmariadb.so", "libmariadb.so.3")
+    )
 
 
 def main() -> None:
