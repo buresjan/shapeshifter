@@ -438,23 +438,88 @@ def _resolve_pvpython_executable() -> str:
     )
 
 
+def _select_bp_dataset(results_dir: Path) -> Optional[Path]:
+    """Choose the most suitable ADIOS2 dataset inside ``results_dir``."""
+
+    preferred_names = [
+        "output_3D.bp",
+        "output_3D",  # legacy naming without the .bp suffix
+    ]
+    for name in preferred_names:
+        candidate = results_dir / name
+        if candidate.exists():
+            return candidate
+
+    # Fallback: pick the first *.bp entry, preferring names that mention output_3D.
+    bp_candidates = sorted(results_dir.glob("output_3D*.bp"))
+    if bp_candidates:
+        return bp_candidates[0]
+    generic_candidates = sorted(results_dir.glob("*.bp"))
+    if generic_candidates:
+        return generic_candidates[0]
+
+    return None
+
+
+def _discover_bp_path(run_dir: Path, case_stem: str) -> Path:
+    """Return the ADIOS2 dataset path for ``case_stem`` within ``run_dir``."""
+
+    expected = f"results_sim_tcpc_res{RESOLUTION:02d}_{case_stem}"
+    search_roots = [run_dir, run_dir / "sim_NSE"]
+
+    candidate_dirs: list[Path] = []
+    seen: set[Path] = set()
+
+    def _push(path: Path) -> None:
+        try:
+            resolved = path.resolve(strict=True)
+        except FileNotFoundError:
+            return
+        if not resolved.is_dir():
+            return
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        candidate_dirs.append(resolved)
+
+    for root in search_roots:
+        _push(root / expected)
+
+    patterns = (
+        f"results_sim_tcpc_res*_{case_stem}",
+        f"results_*{case_stem}*",
+    )
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for pattern in patterns:
+            for match in sorted(root.glob(pattern)):
+                _push(match)
+
+    for match in sorted(run_dir.glob("results_*")):
+        _push(match)
+
+    for directory in candidate_dirs:
+        bp_path = _select_bp_dataset(directory)
+        if bp_path is not None:
+            return bp_path
+
+    existing = sorted(p.name for p in run_dir.glob("results_*") if p.is_dir())
+    details = ", ".join(existing) if existing else "no results_* directories"
+    raise FileNotFoundError(
+        f"Unable to locate ADIOS2 outputs for '{case_stem}' under '{run_dir}'. "
+        f"Available directories: {details}."
+    )
+
+
 def _invoke_tcpc_split(run_dir: Path, case_basename: str) -> Path:
     """Run tcpc_split.py via pvpython and return the generated CSV path."""
     if not TCPC_SPLIT_SCRIPT.is_file():
         raise FileNotFoundError(f"tcpc_split.py not found at '{TCPC_SPLIT_SCRIPT}'")
     pvpython_bin = _resolve_pvpython_executable()
     case_stem = Path(case_basename).stem
-    results_dir = run_dir / f"results_sim_tcpc_res{RESOLUTION:02d}_{case_stem}"
-    preferred_bp = results_dir / "output_3D.bp"
-    if preferred_bp.is_file():
-        bp_path = preferred_bp
-    else:
-        bp_candidates = sorted(results_dir.glob("*.bp"))
-        if not bp_candidates:
-            raise FileNotFoundError(
-                f"No .bp file found for TCPC split inside '{results_dir}'."
-            )
-        bp_path = bp_candidates[0]
+    bp_path = _discover_bp_path(run_dir, case_stem)
+    print(f"[split] Using ADIOS2 dataset '{bp_path}'", flush=True)
     output_dir = run_dir / "tcpc_split" / case_stem
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_name = f"{case_stem}_split.csv"
