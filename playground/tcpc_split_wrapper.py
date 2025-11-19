@@ -56,6 +56,9 @@ def _ensure_vtk_stubs() -> None:
     _ensure_optional_vtk_module(
         "vtkmodules.vtkIOMySQL", ("libmariadb.so", "libmariadb.so.3")
     )
+    _ensure_optional_vtk_module(
+        "vtkmodules.vtkIOExportPDF", ("libhpdf.so", "libhpdf.so.2.4")
+    )
 
 
 def main() -> None:
