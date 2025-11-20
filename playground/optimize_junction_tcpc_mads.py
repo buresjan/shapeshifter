@@ -136,7 +136,7 @@ def main() -> Tuple[np.ndarray, float]:
         x0=X0,
         optimizer=mads,
         parallel=True,
-        normalize=False,
+        normalize=True,
         max_evals=MAX_EVALS,
         verbose=True,
     )
