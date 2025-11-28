@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 import os
 import threading
+import multiprocessing
 from typing import Dict, Tuple
 
 import numpy as np
@@ -76,6 +77,41 @@ _OBJECTIVE_CACHE: Dict[Tuple[float, ...], float] = {}
 _CACHE_LOCK = threading.Lock()
 
 
+def _objective_worker(arr: np.ndarray, eid: int, queue: multiprocessing.Queue) -> None:
+    """Module-level worker so it is picklable under the spawn start method."""
+    try:
+        import numpy as _np
+        from optimize_junction_tcpc import _objective as _nm_obj  # type: ignore
+
+        val = float(_nm_obj(_np.asarray(arr, dtype=float), algorithm="mads", eval_id=eid))
+        queue.put(("ok", val))
+    except Exception as exc:  # pragma: no cover - safety net
+        queue.put(("err", str(exc)))
+
+
+def _objective_subprocess(x: np.ndarray, *, eval_id: int) -> float:
+    """Run the shared TCPC objective in a fresh process to avoid Gmsh thread limits."""
+
+    # Prefer fork on POSIX to avoid signal handler issues when spawning from worker threads,
+    # but keep a spawn fallback for platforms without fork.
+    ctx = (
+        multiprocessing.get_context("fork")
+        if "fork" in multiprocessing.get_all_start_methods()
+        else multiprocessing.get_context("spawn")
+    )
+    q: multiprocessing.Queue = ctx.Queue()
+
+    proc = ctx.Process(target=_objective_worker, args=(np.asarray(x, dtype=float), eval_id, q))
+    proc.start()
+    proc.join()
+
+    status, payload = q.get() if not q.empty() else ("err", "no-result")
+    if status == "ok":
+        return float(payload)
+    # On error or missing result, propagate a penalty so the optimiser can continue.
+    return float(GEOMETRY_PENALTY)
+
+
 def _memoized_objective(x: np.ndarray) -> float:
     """Memoized adapter around the shared TCPC objective."""
 
@@ -91,7 +127,7 @@ def _memoized_objective(x: np.ndarray) -> float:
             flush=True,
         )
         return float(cached)
-    value = float(_nm_objective(arr, algorithm="mads", eval_id=eval_id))
+    value = float(_objective_subprocess(arr, eval_id=eval_id))
     if not math.isfinite(value):
         raise RuntimeError(f"Objective returned non-finite value {value} for x={key}")
     if value >= GEOMETRY_PENALTY:
