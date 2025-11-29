@@ -1,0 +1,1046 @@
+#!/usr/bin/env python3
+"""Parallel Nelder–Mead optimisation of the TCPC junction geometry (TKE objective).
+
+This script minimises the turbulent kinetic energy returned by the 3D TCPC solver
+(`sim_tcpc_tke`) while parametrising the mesh via `meshgen`'s `junction_2d`
+template. The optimisation is intentionally simple and self-contained:
+
+- Variables (in this order):
+  - offset ∈ [-1.0, 1.0]
+  - lower_angle ∈ [-20.0, 20.0]     [degrees]
+  - upper_angle ∈ [-20.0, 20.0]     [degrees]
+  - lower_flare ∈ [0.0, 0.25]       [meters]
+  - upper_flare ∈ [0.0, 0.25]       [meters]
+
+- Fixed settings:
+  - Resolution: 5 (both for voxelisation and solver argument)
+  - Initial point: [0.1, 4.0, -3.0, 0.1, 0.1]
+  - Max evaluations: 80
+  - Optimiser: Nelder–Mead (optilb), with memoisation and parallel evaluation
+  - Normalisation: enabled (optimises in the unit hypercube)
+
+How it works (per evaluation):
+  1) Generate the mesh triplet (`geom_`, `dim_`, `angle_`) with meshgen under a
+     temporary workspace.
+  2) Stage the triplet inside the `tnl-lbm` repository under `sim_NSE`.
+  3) Invoke `submodules/tnl-lbm/run_tcpc_simulation.py` so the solver is
+     submitted via Slurm (`sbatch`) and monitored until completion.
+  4) Return the scalar objective (TKE) emitted by the solver (failing loudly if the
+     job terminates without a value).
+
+Run instructions (local or Slurm):
+  - Slurm: submit the launcher:
+      sbatch playground/optimize_junction_tcpc_tke.sh
+
+Notes:
+- No CLI knobs — all parameters live in this script for clarity.
+- Parallel evaluation uses a thread pool to avoid pickling issues. Each worker
+  stages its own uniquely named geometry artefacts before submitting the Slurm
+  job via `run_tcpc_simulation.py`.
+"""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import importlib.util
+import math
+import os
+import shutil
+import subprocess
+import threading
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
+from typing import Callable, Dict, Optional, Tuple
+
+import numpy as np
+
+from optilb import DesignSpace, OptimizationProblem
+from optilb.optimizers import NelderMeadOptimizer
+import optilb.optimizers.nelder_mead as nm_impl
+
+# Reuse the proven geometry helpers from the runnable TCPC script.
+from run_junction_tcpc import (
+    ensure_txt_suffix,
+    generate_geometry,
+    locate_solver_root,
+    prepare_run_directory,
+    stage_geometry,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixed configuration (edit here, no CLI)
+# ---------------------------------------------------------------------------
+RESOLUTION = 4
+MAX_EVALS = 50
+PARAMETER_NAMES = ("offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare")
+
+# Initial point (offset, lower_angle, upper_angle, lower_flare, upper_flare)
+# Geometry union is only robust when branches stay close to the stem.
+X0 = np.array([0.001, 4.0, -3.0, 0.001, 0.001], dtype=float)
+
+# Bounds
+LOWER = np.array([-0.01, -15.0, -15.0, 0.000, 0.000], dtype=float)
+UPPER = np.array([+0.01, +15.0, +15.0, 0.0025, 0.0025], dtype=float)
+
+# Penalised objective value when geometry cannot be generated
+GEOMETRY_PENALTY = 1.0e9
+
+# Parallel evaluation workers (threads)
+N_WORKERS = int(os.environ.get("OPT_NM_WORKERS", "8"))
+LOG_SIMPLEX = os.environ.get("TCPC_LOG_SIMPLEX", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
+ALGORITHM_LABEL = "nelder_mead_tke"
+
+# Optional per-run tag to avoid staging collisions when multiple optimisations
+# share the same solver data root. Defaults to a random token.
+def _sanitize_tag(raw: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in raw)
+    return cleaned.strip("_-")
+
+
+_RUN_TAG = os.environ.get("TCPC_RUN_TAG") or f"run_{uuid.uuid4().hex[:8]}"
+_RUN_TAG = _sanitize_tag(_RUN_TAG)
+if _RUN_TAG:
+    _RUN_TAG = f"{_RUN_TAG}_"
+
+# Force a specific Open MPI accelerator backend to avoid CUDA/ROCm clashes on
+# mixed nodes. Exporting OMPI_MCA_accelerator propagates into the sbatch job.
+MPI_ACCELERATOR = (
+    os.environ.get("TCPC_MPI_ACCELERATOR")
+    or os.environ.get("OMPI_MCA_accelerator")
+    or "cuda"
+)
+os.environ["OMPI_MCA_accelerator"] = MPI_ACCELERATOR
+
+# Slurm submission defaults (override via environment variables if desired)
+def _env_optional_int(var: str, default: int | None) -> int | None:
+    raw = os.environ.get(var)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Environment variable {var} must be an integer, got {raw!r}") from exc
+
+
+def _env_float(var: str, default: float) -> float:
+    raw = os.environ.get(var)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"Environment variable {var} must be a float, got {raw!r}") from exc
+
+
+def _env_bool(var: str, default: bool = False) -> bool:
+    raw = os.environ.get(var)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+SLURM_PARTITION = os.environ.get("TCPC_SLURM_PARTITION")
+SLURM_GPUS = _env_optional_int("TCPC_SLURM_GPUS", 1)
+SLURM_CPUS = _env_optional_int("TCPC_SLURM_CPUS", 8)
+SLURM_MEM = os.environ.get("TCPC_SLURM_MEM", "32G")
+SLURM_WALLTIME = os.environ.get("TCPC_SLURM_WALLTIME", "22:00:00")
+SLURM_POLL_INTERVAL = _env_float("TCPC_SLURM_POLL_INTERVAL", 60.0)
+SLURM_AVG_WINDOW = _env_float("TCPC_SLURM_AVG_WINDOW", 1.0)  # TKE output window is 1 s
+SLURM_VERBOSE = _env_bool("TCPC_SLURM_VERBOSE", False)
+
+# TCPC split checker configuration
+_TNLLBM_ROOT = Path(__file__).resolve().parents[1] / "submodules" / "tnl-lbm"
+_SPLIT_WRAPPER = Path(__file__).resolve().parent / "tcpc_split_wrapper.py"
+_DEFAULT_SPLIT_SCRIPT = _SPLIT_WRAPPER if _SPLIT_WRAPPER.is_file() else (_TNLLBM_ROOT / "tcpc_split.py")
+TCPC_SPLIT_SCRIPT = Path(os.environ.get("TCPC_SPLIT_SCRIPT", str(_DEFAULT_SPLIT_SCRIPT)))
+TCPC_SPLIT_PVPYTHON = os.environ.get("TCPC_SPLIT_PVPYTHON", os.environ.get("PV_PYTHON", "pvpython"))
+TCPC_SPLIT_TIME_INDEX = int(os.environ.get("TCPC_SPLIT_TIME_INDEX", "-1"))
+TCPC_SPLIT_MIN_FRACTION = float(os.environ.get("TCPC_SPLIT_MIN_FRACTION", "0.25"))
+TCPC_SPLIT_WRITE_VTP = _env_bool("TCPC_SPLIT_WRITE_VTP", False)
+TCPC_SPLIT_WRITE_DEBUG_POINTS = _env_bool("TCPC_SPLIT_WRITE_DEBUG_POINTS", False)
+
+
+# ---------------------------------------------------------------------------
+# Evaluation logging (shared with the MADS wrapper)
+# ---------------------------------------------------------------------------
+_EVAL_LOCK = threading.Lock()
+_EVAL_COUNTERS: Dict[str, int] = {}
+_EVAL_LOG_PATHS: Dict[str, Path] = {}
+_EVAL_TIMESTAMP = datetime.now().strftime("%Y%m%d-%H%M%S")
+_EVAL_LOG_ROOT = Path(__file__).resolve().parents[1] / "tmp" / "junction_tcpc_logs"
+
+
+def _next_eval_id(algorithm: str) -> int:
+    """Return a monotonically increasing evaluation id per algorithm name."""
+    with _EVAL_LOCK:
+        current = _EVAL_COUNTERS.get(algorithm, 0) + 1
+        _EVAL_COUNTERS[algorithm] = current
+        return current
+
+
+def _log_eval(algorithm: str, eval_id: int, x: np.ndarray, value: float) -> Path:
+    """Append an evaluation record to the per-run CSV log and return its path."""
+    log_dir = _EVAL_LOG_ROOT
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with _EVAL_LOCK:
+        path = _EVAL_LOG_PATHS.get(algorithm)
+        if path is None:
+            run_label = f"{_RUN_TAG}{algorithm}" if _RUN_TAG else algorithm
+            run_label = run_label.strip("_") or algorithm
+            path = log_dir / f"{run_label}_{_EVAL_TIMESTAMP}.csv"
+            _EVAL_LOG_PATHS[algorithm] = path
+
+        new_file = not path.exists()
+        with path.open("a", newline="") as handle:
+            writer = csv.writer(handle)
+            if new_file:
+                writer.writerow(
+                    ("eval_id", "objective", *PARAMETER_NAMES, "timestamp_iso8601")
+                )
+            writer.writerow(
+                (
+                    eval_id,
+                    float(value),
+                    *[float(v) for v in np.asarray(x, dtype=float)],
+                    datetime.now().isoformat(),
+                )
+            )
+        return path
+
+
+def _current_eval_log_path(algorithm: str) -> Optional[Path]:
+    """Return the log path if at least one evaluation was recorded."""
+    with _EVAL_LOCK:
+        return _EVAL_LOG_PATHS.get(algorithm)
+
+
+@dataclass(frozen=True)
+class Paths:
+    project_root: Path
+    solver_binary: Path
+    solver_root: Path
+    run_tcpc_script: Path
+
+
+def _project_paths() -> Paths:
+    """Resolve repository paths and the solver binary/root."""
+    project_root = Path(__file__).resolve().parents[1]
+    solver_binary = (
+        project_root / "submodules" / "tnl-lbm" / "build" / "sim_NSE" / "sim_tcpc_tke"
+    ).resolve()
+    if not solver_binary.is_file():
+        raise FileNotFoundError(
+            f"sim_tcpc_tke binary not found at '{solver_binary}'. Build tnl-lbm first."
+        )
+    solver_root = locate_solver_root(solver_binary)
+    run_tcpc_script = solver_root / "run_tcpc_simulation.py"
+    if not run_tcpc_script.is_file():
+        raise FileNotFoundError(
+            f"run_tcpc_simulation.py not found at '{run_tcpc_script}'. Ensure the tnl-lbm submodule is present."
+        )
+    return Paths(
+        project_root=project_root,
+        solver_binary=solver_binary,
+        solver_root=solver_root,
+        run_tcpc_script=run_tcpc_script,
+    )
+
+
+def _hash_params(x: np.ndarray) -> str:
+    """Stable short hash for a parameter vector (used for file/run naming)."""
+    txt = ",".join(f"{v:.8g}" for v in np.asarray(x, dtype=float))
+    return hashlib.sha1(txt.encode("ascii")).hexdigest()[:12]
+
+
+@lru_cache(maxsize=1)
+def _load_run_tcpc_module(script_path: Path):
+    """Load the run_tcpc_simulation module and patch staging for per-run data."""
+    spec = importlib.util.spec_from_file_location("tnl_lbm_run_tcpc", str(script_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load module spec from {script_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[arg-type]
+    if not hasattr(module, "run_tcpc_simulation"):
+        raise AttributeError(
+            f"'run_tcpc_simulation.py' at {script_path} does not expose run_tcpc_simulation"
+        )
+
+    if not hasattr(module, "_codex_stage_registry"):
+        module._codex_stage_registry = {}
+
+    if not hasattr(module, "_codex_run_dirs_by_thread"):
+        module._codex_run_dirs_by_thread = {}
+    if not hasattr(module, "_codex_run_dir_lock"):
+        module._codex_run_dir_lock = threading.Lock()
+
+    if not getattr(module, "_codex_make_run_dir_patched", False):
+        original_make_run_dir = getattr(module, "_make_run_dir")
+
+        def _make_run_dir_with_staging(project_root: Path, filename: str) -> Path:
+            run_dir = original_make_run_dir(project_root, filename)
+
+            lock = getattr(module, "_codex_run_dir_lock")
+            run_dir_map = getattr(module, "_codex_run_dirs_by_thread")
+            with lock:
+                queue = run_dir_map.setdefault(threading.get_ident(), [])
+                queue.append(run_dir)
+
+            registry = getattr(module, "_codex_stage_registry", {})
+            stage_queue = registry.get(filename)
+            if stage_queue:
+                stage_sources = stage_queue.pop(0)
+                if not stage_queue:
+                    registry.pop(filename, None)
+                sim_root = run_dir / "sim_NSE"
+                for subdir in ("geometry", "dimensions", "angle", "tmp"):
+                    (sim_root / subdir).mkdir(parents=True, exist_ok=True)
+                for label, source in stage_sources.items():
+                    target_dir = "tmp" if label == "values" else label
+                    destination = sim_root / target_dir / source.name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, destination)
+            return run_dir
+
+        module._make_run_dir = _make_run_dir_with_staging  # type: ignore[attr-defined]
+        module._codex_make_run_dir_patched = True
+
+    if not getattr(module, "_codex_write_sbatch_patched", False):
+        import shlex as _shlex  # local import to avoid relying on module globals
+
+        def _write_sbatch_with_local_root(
+            *,
+            run_dir: Path,
+            solver_binary: Path,
+            resolution: int,
+            filename: str,
+            partition: str | None,
+            gpus: int | None,
+            cpus: int | None,
+            mem: str | None,
+            walltime: str,
+            project_root: Path,
+        ) -> Path:
+            """Copy of tnl-lbm _write_sbatch that binds TNL_LBM_DATA_ROOT to run_dir/sim_NSE."""
+            job_name = module._job_name(run_dir.name)
+            lines = [
+                "#!/bin/bash",
+                f"#SBATCH --job-name={job_name}",
+                "#SBATCH --output=slurm.out",
+                "#SBATCH --error=slurm.err",
+                f"#SBATCH --time={walltime}",
+            ]
+            if partition:
+                lines.append(f"#SBATCH --partition={partition}")
+            if gpus is not None:
+                lines.append(f"#SBATCH --gpus={gpus}")
+            if cpus is not None:
+                lines.append(f"#SBATCH --cpus-per-task={cpus}")
+            if mem:
+                lines.append(f"#SBATCH --mem={mem}")
+
+            data_root = run_dir / "sim_NSE"
+            data_root.mkdir(parents=True, exist_ok=True)
+            tmp_dir = data_root / "tmp"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+
+            solver_quoted = _shlex.quote(str(solver_binary.resolve()))
+            filename_quoted = _shlex.quote(filename)
+            data_root_quoted = _shlex.quote(str(data_root.resolve()))
+            tmp_dir_rel = Path("sim_NSE") / "tmp"
+            tmp_dir_quoted = _shlex.quote(str(tmp_dir_rel))
+            result_basename = f"val_{Path(filename).name}"
+            result_basename_quoted = _shlex.quote(result_basename)
+            resolution_literal = str(resolution)
+
+            body = (
+                f"""set -euo pipefail
+cd "$SLURM_SUBMIT_DIR"
+
+SOLVER_BINARY={solver_quoted}
+INPUT_FILENAME={filename_quoted}
+RESOLUTION={resolution_literal}
+TMP_DIR={tmp_dir_quoted}
+RESULT_BASENAME={result_basename_quoted}
+DATA_ROOT={data_root_quoted}
+
+export TNL_LBM_DATA_ROOT="$DATA_ROOT"
+
+mkdir -p "$TMP_DIR"
+rm -f "$TMP_DIR/$RESULT_BASENAME"
+
+if [ ! -x "$SOLVER_BINARY" ]; then
+    echo "Solver binary $SOLVER_BINARY is missing or not executable." >&2
+    exit 3
+fi
+
+echo "sim_tcpc_tke start $(date --iso-8601=seconds)" >&2
+"$SOLVER_BINARY" "$RESOLUTION" "$INPUT_FILENAME"
+echo "sim_tcpc_tke end $(date --iso-8601=seconds)" >&2
+
+RESULT_PATH="$TMP_DIR/$RESULT_BASENAME"
+if [ ! -f "$RESULT_PATH" ]; then
+    echo "Result file $RESULT_PATH not produced" >&2
+    exit 2
+fi
+"""
+            )
+            script_text = "\n".join(lines + ["", body])
+            sbatch_path = run_dir / "job.sbatch"
+            sbatch_path.write_text(script_text, encoding="ascii")
+            return sbatch_path
+
+        module._write_sbatch = _write_sbatch_with_local_root  # type: ignore[attr-defined]
+        module._codex_write_sbatch_patched = True
+
+    return module
+
+
+class LoggingNelderMeadOptimizer(NelderMeadOptimizer):
+    """Nelder–Mead variant that prints simplex coordinates each iteration."""
+
+    def __init__(self, *, log_simplex: bool = True, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.log_simplex = log_simplex
+
+    def _log_simplex_state(
+        self,
+        iteration: int,
+        simplex: list[np.ndarray],
+        fvals: list[float],
+        transform: nm_impl.SpaceTransform | None,
+    ) -> None:
+        if not self.log_simplex:
+            return
+        entries = []
+        for idx, (pt, val) in enumerate(zip(simplex, fvals)):
+            coords = (
+                transform.from_unit(np.asarray(pt, dtype=float))
+                if transform is not None
+                else np.asarray(pt, dtype=float)
+            )
+            coords_fmt = ", ".join(f"{float(c):+.6f}" for c in coords)
+            entries.append(f"v{idx}: f={float(val):.6g} [{coords_fmt}]")
+        print(f"[simplex] iter={iteration:03d} " + "; ".join(entries), flush=True)
+
+    # Adapted from optilb.optimizers.nelder_mead.NelderMeadOptimizer to emit simplex logs.
+    def optimize(
+        self,
+        objective: Callable[[np.ndarray], float],
+        x0: np.ndarray,
+        space: DesignSpace,
+        constraints: list[nm_impl.Constraint] | tuple[nm_impl.Constraint, ...] = (),
+        *,
+        initial_simplex: list[np.ndarray] | np.ndarray | None = None,
+        initial_simplex_values: list[float] | None = None,
+        max_iter: int = 100,
+        max_evals: int | None = None,
+        tol: float = 1e-6,
+        seed: int | None = None,
+        parallel: bool = False,
+        verbose: bool = False,
+        early_stopper: nm_impl.EarlyStopper | None = None,
+        normalize: bool = False,
+    ) -> nm_impl.OptResult:
+        if seed is not None:
+            np.random.default_rng(seed)
+
+        original_space = space
+        provided_simplex: list[np.ndarray] | None = None
+        provided_fvals: list[float] | None = None
+        if initial_simplex is not None or initial_simplex_values is not None:
+            if initial_simplex is None or initial_simplex_values is None:
+                raise ValueError(
+                    "initial_simplex and initial_simplex_values must be provided together"
+                )
+            provided_simplex = [np.asarray(pt, dtype=float) for pt in initial_simplex]
+            provided_fvals = [float(val) for val in initial_simplex_values]
+            expected_vertices = original_space.dimension + 1
+            if len(provided_simplex) != expected_vertices:
+                raise ValueError("initial_simplex must contain dimension + 1 vertices")
+            if len(provided_fvals) != len(provided_simplex):
+                raise ValueError(
+                    "initial_simplex_values length must match initial_simplex"
+                )
+            for vertex in provided_simplex:
+                if vertex.shape != original_space.lower.shape:
+                    raise ValueError("Initial simplex vertex has wrong dimension")
+                if np.any(vertex < original_space.lower) or np.any(
+                    vertex > original_space.upper
+                ):
+                    raise ValueError("Initial simplex vertex outside design bounds")
+
+        normalize_transform: nm_impl.SpaceTransform | None = None
+        self._history_transform = None
+        eval_map: Callable[[np.ndarray], np.ndarray] | None = None
+        constraints = nm_impl.constraints_to_callable(constraints)
+
+        if normalize:
+            normalize_transform = nm_impl.SpaceTransform(original_space)
+            space = normalize_transform.space
+            self._history_transform = normalize_transform
+            eval_map = normalize_transform.to_unit
+            if provided_simplex is not None:
+                provided_simplex = [
+                    normalize_transform.to_unit(pt) for pt in provided_simplex
+                ]
+
+        x0 = np.asarray(space.project(x0), dtype=float)
+        self.record(x0, tag="start")
+        self.reset_history()
+
+        rng = np.random.default_rng(seed)
+        constraints = tuple(constraints)
+
+        max_evals = max_iter if max_evals is None else max_evals
+        if max_evals is not None and max_evals <= 0:
+            raise ValueError("max_evals must be positive")
+
+        # Build initial simplex if not provided
+        simplex: list[np.ndarray] = (
+            [np.asarray(pt, dtype=float) for pt in provided_simplex]
+            if provided_simplex is not None
+            else [x0]
+        )
+
+        if provided_simplex is None:
+            for _ in range(space.dimension):
+                perturbed = simplex[0] + self.sigma * rng.random(space.dimension)
+                simplex.append(perturbed)
+        simplex = [np.asarray(space.project(pt), dtype=float) for pt in simplex]
+
+        fvals: list[float] = []
+        if provided_fvals is None:
+            fvals = [float(objective(x0))]
+            for idx, pt in enumerate(simplex[1:], start=1):
+                fvals.append(float(objective(pt)))
+                if max_evals is not None and len(fvals) >= max_evals:
+                    break
+        else:
+            fvals = [float(val) for val in provided_fvals]
+
+        self._log_simplex_state(0, simplex, fvals, normalize_transform)
+        self.record(simplex[0], tag="0")
+
+        iteration = 0
+        while True:
+            order = np.argsort(fvals)
+            simplex = [simplex[i] for i in order]
+            fvals = [fvals[i] for i in order]
+            self._log_simplex_state(iteration, simplex, fvals, normalize_transform)
+            self.record(simplex[0], tag=str(iteration))
+
+            if max_evals is not None and len(fvals) >= max_evals:
+                break
+            if early_stopper is not None and early_stopper(fvals):
+                break
+
+            centroid = np.mean(simplex[:-1], axis=0)
+            worst = simplex[-1]
+
+            xr = centroid + self.alpha * (centroid - worst)
+            fr = float(objective(space.project(xr)))
+            if fr < fvals[0]:
+                xe = centroid + self.gamma * (xr - centroid)
+                fe = float(objective(space.project(xe)))
+                if fe < fr:
+                    simplex[-1] = xe
+                    fvals[-1] = fe
+                else:
+                    simplex[-1] = xr
+                    fvals[-1] = fr
+            elif fr < fvals[-2]:
+                simplex[-1] = xr
+                fvals[-1] = fr
+            else:
+                xc = centroid + self.rho * (worst - centroid)
+                fc = float(objective(space.project(xc)))
+                if fc < fvals[-1]:
+                    simplex[-1] = xc
+                    fvals[-1] = fc
+                else:
+                    xic = simplex[0] + self.sigma * (simplex[1:] - simplex[0])
+                    simplex = [simplex[0]] + [np.asarray(pt, dtype=float) for pt in xic]
+                    fvals = [fvals[0]] + [
+                        float(objective(space.project(pt))) for pt in simplex[1:]
+                    ]
+
+            iteration += 1
+            if verbose:
+                print(f"[nm] iter={iteration:03d} best={fvals[0]:.6g}")
+
+        best_idx = int(np.argmin(fvals))
+        best_x = simplex[best_idx]
+        best_f = fvals[best_idx]
+        if normalize_transform is not None:
+            best_x = normalize_transform.from_unit(best_x)
+
+        return nm_impl.OptResult(
+            best_x=np.asarray(best_x, dtype=float),
+            best_f=float(best_f),
+            nfev=len(fvals),
+            simplex_history=self.history(),
+            optimizer="Nelder-Mead",
+        )
+
+def _pop_tracked_run_dir(tcpc_module) -> Optional[Path]:
+    """Return the latest run directory registered for the current thread."""
+    lock = getattr(tcpc_module, "_codex_run_dir_lock", None)
+    run_dir_map = getattr(tcpc_module, "_codex_run_dirs_by_thread", None)
+    if lock is None or run_dir_map is None:
+        return None
+    ident = threading.get_ident()
+    with lock:
+        queue = run_dir_map.get(ident)
+        if not queue:
+            return None
+        run_dir = queue.pop(0)
+        if not queue:
+            run_dir_map.pop(ident, None)
+        return run_dir
+
+
+def _discard_failed_run_dir(tcpc_module) -> None:
+    """Drop and delete the most recent run dir if a solver job failed."""
+    failed_dir = _pop_tracked_run_dir(tcpc_module)
+    if failed_dir is None:
+        return
+    try:
+        shutil.rmtree(failed_dir, ignore_errors=True)
+    except OSError:
+        pass
+
+
+def _resolve_pvpython_executable() -> str:
+    """Return the pvpython executable path, raising if missing."""
+    candidate = Path(TCPC_SPLIT_PVPYTHON)
+    if candidate.is_file():
+        return str(candidate)
+    resolved = shutil.which(TCPC_SPLIT_PVPYTHON)
+    if resolved:
+        return resolved
+    raise FileNotFoundError(
+        f"pvpython executable '{TCPC_SPLIT_PVPYTHON}' not found. "
+        "Set TCPC_SPLIT_PVPYTHON or PV_PYTHON to a valid binary."
+    )
+
+
+def _select_bp_dataset(results_dir: Path) -> Optional[Path]:
+    """Choose the most suitable ADIOS2 dataset inside ``results_dir``."""
+
+    preferred_names = [
+        "output_3D.bp",
+        "output_3D",  # legacy naming without the .bp suffix
+    ]
+    for name in preferred_names:
+        candidate = results_dir / name
+        if candidate.exists():
+            return candidate
+
+    # Fallback: pick the first *.bp entry, preferring names that mention output_3D.
+    bp_candidates = sorted(results_dir.glob("output_3D*.bp"))
+    if bp_candidates:
+        return bp_candidates[0]
+    generic_candidates = sorted(results_dir.glob("*.bp"))
+    if generic_candidates:
+        return generic_candidates[0]
+
+    return None
+
+
+def _discover_bp_path(run_dir: Path, case_stem: str) -> Path:
+    """Return the ADIOS2 dataset path for ``case_stem`` within ``run_dir``."""
+
+    expected = f"results_sim_tcpc_res{RESOLUTION:02d}_{case_stem}"
+    search_roots = [run_dir, run_dir / "sim_NSE"]
+
+    candidate_dirs: list[Path] = []
+    seen: set[Path] = set()
+
+    def _push(path: Path) -> None:
+        try:
+            resolved = path.resolve(strict=True)
+        except FileNotFoundError:
+            return
+        if not resolved.is_dir():
+            return
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        candidate_dirs.append(resolved)
+
+    for root in search_roots:
+        _push(root / expected)
+
+    patterns = (
+        f"results_sim_tcpc_res*_{case_stem}",
+        f"results_*{case_stem}*",
+    )
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for pattern in patterns:
+            for match in sorted(root.glob(pattern)):
+                _push(match)
+
+    for match in sorted(run_dir.glob("results_*")):
+        _push(match)
+
+    for directory in candidate_dirs:
+        bp_path = _select_bp_dataset(directory)
+        if bp_path is not None:
+            return bp_path
+
+    existing = sorted(p.name for p in run_dir.glob("results_*") if p.is_dir())
+    details = ", ".join(existing) if existing else "no results_* directories"
+    raise FileNotFoundError(
+        f"Unable to locate ADIOS2 outputs for '{case_stem}' under '{run_dir}'. "
+        f"Available directories: {details}."
+    )
+
+
+def _invoke_tcpc_split(run_dir: Path, case_basename: str) -> Path:
+    """Run tcpc_split.py via pvpython and return the generated CSV path."""
+    if not TCPC_SPLIT_SCRIPT.is_file():
+        raise FileNotFoundError(f"tcpc_split.py not found at '{TCPC_SPLIT_SCRIPT}'")
+    pvpython_bin = _resolve_pvpython_executable()
+    case_stem = Path(case_basename).stem
+    bp_path = _discover_bp_path(run_dir, case_stem)
+    print(f"[split] Using ADIOS2 dataset '{bp_path}'", flush=True)
+    output_dir = run_dir / "tcpc_split" / case_stem
+    output_dir.mkdir(parents=True, exist_ok=True)
+    csv_name = f"{case_stem}_split.csv"
+    cmd = [
+        pvpython_bin,
+        str(TCPC_SPLIT_SCRIPT),
+        "--bp-file",
+        str(bp_path),
+        "--time-index",
+        str(TCPC_SPLIT_TIME_INDEX),
+        "--output-dir",
+        str(output_dir),
+        "--csv-basename",
+        csv_name,
+        "--quiet",
+    ]
+    cmd.append("--write-vtp" if TCPC_SPLIT_WRITE_VTP else "--no-write-vtp")
+    cmd.append("--write-debug-points" if TCPC_SPLIT_WRITE_DEBUG_POINTS else "--no-write-debug-points")
+    subprocess.run(cmd, check=True, cwd=run_dir)
+    csv_path = output_dir / csv_name
+    if not csv_path.is_file():
+        raise FileNotFoundError(f"tcpc_split did not produce CSV '{csv_path}'")
+    return csv_path
+
+
+def _load_split_rows(csv_path: Path) -> list[Dict[str, float | str]]:
+    """Parse the tcpc_split CSV rows into numeric dictionaries."""
+    rows: list[Dict[str, float | str]] = []
+    with csv_path.open("r", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for raw in reader:
+            row: Dict[str, float | str] = {}
+            for key, value in raw.items():
+                if key == "Source":
+                    row[key] = value or ""
+                    continue
+                try:
+                    row[key] = float(value) if value not in (None, "") else float("nan")
+                except (TypeError, ValueError):
+                    row[key] = float("nan")
+            rows.append(row)
+    if not rows:
+        raise ValueError(f"TCPC split CSV '{csv_path}' contained no rows.")
+    return rows
+
+
+def _aggregate_split(rows: list[Dict[str, float | str]]) -> tuple[float, float]:
+    """Return overall LPA/RPA fractions weighted by known streamlines."""
+    total_known = 0.0
+    total_lpa = 0.0
+    total_rpa = 0.0
+    for row in rows:
+        known_raw = row.get("Known")
+        lpa_raw = row.get("LPA")
+        rpa_raw = row.get("RPA")
+        known = known_raw if isinstance(known_raw, (int, float)) else float("nan")
+        lpa = lpa_raw if isinstance(lpa_raw, (int, float)) else float("nan")
+        rpa = rpa_raw if isinstance(rpa_raw, (int, float)) else float("nan")
+        if math.isnan(known):
+            continue
+        total_known += max(0.0, known)
+        if not math.isnan(lpa):
+            total_lpa += max(0.0, lpa)
+        if not math.isnan(rpa):
+            total_rpa += max(0.0, rpa)
+    if total_known <= 0.0:
+        return float("nan"), float("nan")
+    return total_lpa / total_known, total_rpa / total_known
+
+
+def _run_tcpc_split_check(tcpc_module, case_basename: str) -> tuple[bool, float, float, Path]:
+    """Execute tcpc_split and verify outlet fractions. Returns ok flag and CSV path."""
+    tcpc_run_dir = _pop_tracked_run_dir(tcpc_module)
+    if tcpc_run_dir is None:
+        raise RuntimeError("Unable to determine TCPC run directory for split evaluation.")
+    csv_path = _invoke_tcpc_split(tcpc_run_dir, case_basename)
+    rows = _load_split_rows(csv_path)
+    for row in rows:
+        source_raw = row.get("Source", "unknown")
+        source = source_raw if isinstance(source_raw, str) else str(source_raw)
+        frac_l = row.get("Frac_LPA")
+        frac_r = row.get("Frac_RPA")
+        frac_l_val = frac_l if isinstance(frac_l, (int, float)) else float("nan")
+        frac_r_val = frac_r if isinstance(frac_r, (int, float)) else float("nan")
+        print(
+            f"[split] {source} fractions: LPA={frac_l_val:.3f} RPA={frac_r_val:.3f}",
+            flush=True,
+        )
+    agg_lpa, agg_rpa = _aggregate_split(rows)
+    print(f"[split] aggregated fractions: LPA={agg_lpa:.3f}, RPA={agg_rpa:.3f}", flush=True)
+    ok = (
+        not (math.isnan(agg_lpa) or math.isnan(agg_rpa))
+        and agg_lpa >= TCPC_SPLIT_MIN_FRACTION
+        and agg_rpa >= TCPC_SPLIT_MIN_FRACTION
+    )
+    return ok, agg_lpa, agg_rpa, csv_path
+
+
+def _objective(
+    x: np.ndarray, *, algorithm: str = ALGORITHM_LABEL, eval_id: Optional[int] = None
+) -> float:
+    """Objective wrapper: generate geometry, run solver, return scalar."""
+    eval_id = eval_id if eval_id is not None else _next_eval_id(algorithm)
+    p = _project_paths()
+
+    offset, lower_angle, upper_angle, lower_flare, upper_flare = map(float, x)
+
+    case_tag = _hash_params(x)
+    algo_label = _sanitize_tag(algorithm) if algorithm else "run"
+    case_stem = (
+        f"{_RUN_TAG}{algo_label}_junction_{case_tag}"
+        if _RUN_TAG
+        else f"{algo_label}_junction_{case_tag}"
+    )
+    case_name = ensure_txt_suffix(f"{case_stem}.txt")
+    generated_basename = Path(case_name).name
+
+    print(
+        "[obj] design",
+        f"offset={offset:.6f}",
+        f"lower_angle={lower_angle:.6f}",
+        f"upper_angle={upper_angle:.6f}",
+        f"lower_flare={lower_flare:.6f}",
+        f"upper_flare={upper_flare:.6f}",
+        flush=True,
+    )
+
+    run_dir = prepare_run_directory(p.project_root, generated_basename)
+    workspace = run_dir / "meshgen_output"
+
+    result_value: float | None = None
+    log_path: Optional[Path] = None
+
+    try:
+        files, generated_case_name = generate_geometry(
+            workspace,
+            case_name,
+            resolution=RESOLUTION,
+            lower_angle=lower_angle,
+            upper_angle=upper_angle,
+            upper_flare=upper_flare,
+            lower_flare=lower_flare,
+            offset=offset,
+            num_processes=1,
+        )
+    except Exception as exc:
+        print(f"[obj] geometry failed: {exc}", flush=True)
+        result_value = float(GEOMETRY_PENALTY)
+        log_path = _log_eval(algorithm, eval_id, x, result_value)
+        print(
+            f"[obj] returning penalty value={GEOMETRY_PENALTY:.6g} (eval {eval_id:04d}, log={log_path})",
+            flush=True,
+        )
+        shutil.rmtree(workspace, ignore_errors=True)
+        shutil.rmtree(run_dir, ignore_errors=True)
+        return result_value
+    generated_basename = Path(generated_case_name).name
+
+    staged_files: Dict[str, Path] = {}
+    cleanup_geometry = False
+    cleanup_run_dir = False
+
+    try:
+        to_stage = {k: v for k, v in files.items() if k in {"geometry", "dimensions", "angle"}}
+        tcpc_module = _load_run_tcpc_module(p.run_tcpc_script)
+        registry = getattr(tcpc_module, "_codex_stage_registry")
+        registry.setdefault(generated_basename, []).append(dict(to_stage))
+
+        data_root = p.solver_root / "sim_NSE"
+        staged_files = stage_geometry(to_stage, data_root)
+
+        run_tcpc = tcpc_module.run_tcpc_simulation  # type: ignore[attr-defined]
+        try:
+            value = run_tcpc(
+                generated_basename,
+                resolution=RESOLUTION,
+                project_root=p.solver_root,
+                binary_path=p.solver_binary,
+                partition=SLURM_PARTITION,
+                gpus=SLURM_GPUS,
+                cpus=SLURM_CPUS,
+                mem=SLURM_MEM,
+                walltime=SLURM_WALLTIME,
+                poll_interval=SLURM_POLL_INTERVAL,
+                default_on_failure=float("nan"),
+                avg_window=SLURM_AVG_WINDOW,
+                verbose=SLURM_VERBOSE,
+            )
+        except Exception as exc:
+            _discard_failed_run_dir(tcpc_module)
+            result_value = float(GEOMETRY_PENALTY)
+            log_path = _log_eval(algorithm, eval_id, x, result_value)
+            print(
+                f"[obj] TCPC Slurm run failed for case '{generated_basename}': {exc}",
+                flush=True,
+            )
+            print(
+                f"[obj] returning penalty value={GEOMETRY_PENALTY:.6g} (eval {eval_id:04d}, log={log_path})",
+                flush=True,
+            )
+            cleanup_geometry = True
+            cleanup_run_dir = True
+            return result_value
+        if math.isnan(value):
+            # The solver job failed; drop the queued run_dir so the next
+            # evaluation does not try to run tcpc_split on the stale path.
+            _discard_failed_run_dir(tcpc_module)
+            result_value = float(GEOMETRY_PENALTY)
+            log_path = _log_eval(algorithm, eval_id, x, result_value)
+            print(
+                f"[obj] TCPC Slurm run for case '{generated_basename}' returned NaN; "
+                f"applying penalty (eval {eval_id:04d}, log={log_path})",
+                flush=True,
+            )
+            cleanup_geometry = True
+            cleanup_run_dir = True
+            return result_value
+
+        cleanup_run_dir = True  # remove the run dir even if the split check fails
+        try:
+            split_ok, agg_lpa, agg_rpa, csv_path = _run_tcpc_split_check(
+                tcpc_module, generated_basename
+            )
+        except Exception as exc:
+            split_ok = False
+            agg_lpa = float("nan")
+            agg_rpa = float("nan")
+            csv_path = None
+            print(
+                f"[obj] TCPC split evaluation failed for '{generated_basename}': {exc}",
+                flush=True,
+            )
+
+        result_value = float(value)
+        if not split_ok:
+            print(
+                f"[obj] TCPC split violation: aggregated LPA={agg_lpa:.3f}, "
+                f"RPA={agg_rpa:.3f} (threshold={TCPC_SPLIT_MIN_FRACTION}, csv={csv_path})",
+                flush=True,
+            )
+            result_value = float(GEOMETRY_PENALTY)
+
+        print(
+            f"[obj] completed case={generated_basename} raw={float(value):.6g} final={result_value:.6g}",
+            flush=True,
+        )
+        log_path = _log_eval(algorithm, eval_id, x, result_value)
+        print(
+            f"[obj] eval {eval_id:04d} value={result_value:.6g} x={tuple(map(float, x))} (log={log_path})",
+            flush=True,
+        )
+
+        cleanup_geometry = True
+        cleanup_run_dir = True
+        return result_value
+    finally:
+        if cleanup_geometry and staged_files:
+            for path in staged_files.values():
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    continue
+        if cleanup_run_dir:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+
+def main() -> Tuple[np.ndarray, float]:
+    space = DesignSpace(lower=LOWER, upper=UPPER, names=PARAMETER_NAMES)
+
+    nm = LoggingNelderMeadOptimizer(
+        n_workers=N_WORKERS,
+        memoize=True,
+        parallel_poll_points=True,
+        log_simplex=LOG_SIMPLEX,
+    )
+
+    problem = OptimizationProblem(
+        objective=_objective,
+        space=space,
+        x0=X0,
+        optimizer=nm,
+        parallel=True,
+        normalize=True,
+        max_evals=MAX_EVALS,
+        verbose=True,
+    )
+
+    print("[opt] Starting Nelder–Mead optimisation (TKE objective)")
+    print(
+        f"[opt] max_evals={MAX_EVALS}, workers={N_WORKERS}, normalize=True, memoize=True, "
+        f"log_simplex={LOG_SIMPLEX}"
+    )
+    res = problem.run()
+
+    best_x = res.best_x
+    best_f = float(res.best_f)
+    print("\n[opt] Finished.")
+    print(f"[opt] Best value: {best_f}")
+    print("[opt] Best parameters:")
+    for name, val in zip(space.names or (), best_x):
+        print(f"  - {name}: {val}")
+
+    if problem.log is not None:
+        print("[opt] Log:")
+        print(f"  optimizer = {problem.log.optimizer}")
+        print(f"  nfev      = {problem.log.nfev}")
+        print(f"  runtime   = {problem.log.runtime:.2f} s")
+        print(f"  early     = {problem.log.early_stopped}")
+
+    evaluations = getattr(res, "evaluations", ()) or ()
+    if evaluations:
+        names = space.names or tuple(f"x{i}" for i in range(space.dimension))
+        print(f"[opt] Evaluation log ({len(evaluations)} entries):")
+        for idx, record in enumerate(evaluations, start=1):
+            coords = ", ".join(
+                f"{name}={float(val):.6g}" for name, val in zip(names, record.x)
+            )
+            print(f"  - eval {idx:03d}: f={record.value:.6g}; {coords}")
+    log_path = _current_eval_log_path(ALGORITHM_LABEL)
+    if log_path is not None:
+        print(f"[opt] Evaluation CSV log saved to: {log_path}")
+
+    return best_x, best_f
+
+
+if __name__ == "__main__":
+    main()
