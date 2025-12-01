@@ -24,7 +24,7 @@ if [[ "${1:-}" == "--local" ]]; then
     shift
 fi
 
-export OPT_MADS_WORKERS=${OPT_MADS_WORKERS:-4}
+export OPT_MADS_WORKERS=${OPT_MADS_WORKERS:-8}
 
 if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
     REPO_ROOT="$(realpath "${SLURM_SUBMIT_DIR}")"
