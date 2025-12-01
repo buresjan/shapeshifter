@@ -7,7 +7,7 @@
 # The Python script has all parameters embedded; no CLI flags are used.
 
 #SBATCH --job-name=mads-opt-tcpc-tke
-#SBATCH --time=180:00:00
+#SBATCH --time=168:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus=1
 #SBATCH --mem=60G
