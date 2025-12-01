@@ -44,6 +44,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import importlib.util
+import inspect
 import math
 import os
 import shutil
@@ -52,9 +53,9 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Sequence, Tuple, cast
 
 import numpy as np
 
@@ -437,10 +438,10 @@ class LoggingNelderMeadOptimizer(NelderMeadOptimizer):
         objective: Callable[[np.ndarray], float],
         x0: np.ndarray,
         space: DesignSpace,
-        constraints: list[nm_impl.Constraint] | tuple[nm_impl.Constraint, ...] = (),
+        constraints: Sequence[nm_impl.Constraint] = (),
         *,
-        initial_simplex: list[np.ndarray] | np.ndarray | None = None,
-        initial_simplex_values: list[float] | None = None,
+        initial_simplex: Sequence[np.ndarray] | np.ndarray | None = None,
+        initial_simplex_values: Sequence[float] | None = None,
         max_iter: int = 100,
         max_evals: int | None = None,
         tol: float = 1e-6,
@@ -480,116 +481,377 @@ class LoggingNelderMeadOptimizer(NelderMeadOptimizer):
 
         normalize_transform: nm_impl.SpaceTransform | None = None
         self._history_transform = None
+
         eval_map: Callable[[np.ndarray], np.ndarray] | None = None
-        constraints = nm_impl.constraints_to_callable(constraints)
 
         if normalize:
-            normalize_transform = nm_impl.SpaceTransform(original_space)
-            space = normalize_transform.space
-            self._history_transform = normalize_transform
-            eval_map = normalize_transform.to_unit
+            normalize_transform = nm_impl.SpaceTransform(space)
+            lower = normalize_transform.lower
+            span = normalize_transform.span
+            eval_map = normalize_transform.from_unit
+
+            objective = cast(
+                Callable[[np.ndarray], float],
+                partial(
+                    nm_impl._objective_from_unit,
+                    objective=objective,
+                    lower=lower,
+                    span=span,
+                ),
+            )
+            constraints = [
+                nm_impl.Constraint(
+                    func=partial(
+                        nm_impl._constraint_from_unit,
+                        func=c.func,
+                        lower=lower,
+                        span=span,
+                    ),
+                    name=c.name,
+                )
+                for c in constraints
+            ]
+
+            space = DesignSpace(np.zeros(space.dimension), np.ones(space.dimension))
+            x0 = normalize_transform.to_unit(x0)
             if provided_simplex is not None:
                 provided_simplex = [
                     normalize_transform.to_unit(pt) for pt in provided_simplex
                 ]
 
-        x0 = np.asarray(space.project(x0), dtype=float)
-        self.record(x0, tag="start")
-        self.reset_history()
+            # keep transform for history post-processing
+            self._history_transform = normalize_transform
 
-        rng = np.random.default_rng(seed)
-        constraints = tuple(constraints)
+        # Normal validation/wrapping continues with possibly replaced `space/objective/x0`
+        if provided_simplex is not None:
+            x0 = np.asarray(provided_simplex[0], dtype=float)
+        x0 = self._validate_x0(x0, space)
 
-        max_evals = max_iter if max_evals is None else max_evals
-        if max_evals is not None and max_evals <= 0:
-            raise ValueError("max_evals must be positive")
-
-        # Build initial simplex if not provided
-        simplex: list[np.ndarray] = (
-            [np.asarray(pt, dtype=float) for pt in provided_simplex]
-            if provided_simplex is not None
-            else [x0]
+        raw_objective = objective
+        counted_objective = self._wrap_objective(
+            raw_objective,
+            map_input=eval_map,
         )
 
-        if provided_simplex is None:
-            for _ in range(space.dimension):
-                perturbed = simplex[0] + self.sigma * rng.random(space.dimension)
-                simplex.append(perturbed)
-        simplex = [np.asarray(space.project(pt), dtype=float) for pt in simplex]
+        self.reset_history()
+        self._configure_budget(max_evals)
+
+        n = space.dimension
+        use_provided_simplex = provided_simplex is not None
+        simplex: list[np.ndarray]
+        if use_provided_simplex:
+            simplex = [np.asarray(pt, dtype=float) for pt in provided_simplex]
+        else:
+            simplex = [x0]
+
+        self.record(simplex[0], tag="start")
+
+        penalised_counting = self._make_penalised(
+            counted_objective, space, constraints
+        )
+        penalised_raw = self._make_penalised(raw_objective, space, constraints)
+
+        if early_stopper is not None:
+            early_stopper.reset()
 
         fvals: list[float] = []
-        if provided_fvals is None:
-            fvals = [float(objective(x0))]
-            for idx, pt in enumerate(simplex[1:], start=1):
-                fvals.append(float(objective(pt)))
-                if max_evals is not None and len(fvals) >= max_evals:
-                    break
+        try:
+            with nm_impl._parallel_executor(parallel, self.n_workers) as (
+                executor,
+                manual_count,
+            ):
+                evaluate = penalised_raw if manual_count else penalised_counting
+                # Backwards compatibility: tests may override _eval_points without
+                # accepting the `map_input` keyword.
+                _ep_params = inspect.signature(self._eval_points).parameters
+                _supports_map_kw = "map_input" in _ep_params
+                if use_provided_simplex:
+                    assert provided_fvals is not None
+                    fvals = []
+                    for vertex, value in zip(simplex, provided_fvals):
+                        arr = np.asarray(vertex, dtype=float)
+                        violated = bool(
+                            np.any(arr < space.lower) or np.any(arr > space.upper)
+                        )
+                        if not violated:
+                            for constraint in constraints:
+                                c_val = constraint(arr)
+                                if isinstance(c_val, bool):
+                                    if not c_val:
+                                        violated = True
+                                        break
+                                else:
+                                    if float(c_val) > 0.0:
+                                        violated = True
+                                        break
+                        adjusted_val = float(self.penalty if violated else value)
+                        record_point = (
+                            np.asarray(eval_map(arr), dtype=float)
+                            if eval_map is not None
+                            else arr
+                        )
+                        with self._state_lock:
+                            if (
+                                self._max_evals is not None
+                                and self._nfev >= self._max_evals
+                            ):
+                                self._budget_exhausted = True
+                                raise nm_impl.EvaluationBudgetExceeded(self._max_evals)
+                            self._nfev += 1
+                            self._last_eval_point = arr.copy()
+                            if (
+                                self._max_evals is not None
+                                and self._nfev >= self._max_evals
+                            ):
+                                self._budget_exhausted = True
+                        self._update_best(arr, adjusted_val)
+                        self._record_evaluation(record_point, adjusted_val)
+                        if self._cache_enabled:
+                            key = self._make_cache_key(record_point)
+                            self._cache[key] = float(adjusted_val)
+                        fvals.append(float(adjusted_val))
+                else:
+                    step = np.asarray(self.step, dtype=float)
+                    if step.size == 1:
+                        step = np.full(n, float(step))
+                    if step.shape != (n,):
+                        raise ValueError(
+                            "step must be scalar or of length equal to dimension"
+                        )
+
+                    # initial simplex (N + 1 points)
+                    for i in range(n):
+                        pt = simplex[0].copy()
+                        pt[i] += step[i]
+                        simplex.append(pt)
+                    if _supports_map_kw:
+                        fvals = self._eval_points(
+                            evaluate,
+                            simplex,
+                            executor,
+                            manual_count,
+                            map_input=eval_map,
+                        )
+                    else:
+                        fvals = self._eval_points(
+                            evaluate,
+                            simplex,
+                            executor,
+                            manual_count,
+                        )
+
+                best = min(fvals)
+                no_improv = 0
+
+                # --------------------- main loop ---------------------------
+                for it in range(max_iter):
+                    order = np.argsort(fvals)
+                    simplex = [simplex[i] for i in order]
+                    fvals = [fvals[i] for i in order]
+                    current_best = fvals[0]
+
+                    if self.log_simplex:
+                        self._log_simplex_state(
+                            it, simplex, fvals, normalize_transform
+                        )
+                    self.record(simplex[0], tag=str(it))
+                    if verbose:
+                        nm_impl.logger.info("%d | best %.6f", it, current_best)
+
+                    # early stopping / no-improve logic
+                    if early_stopper is None:
+                        if best - current_best > tol:
+                            best = current_best
+                            no_improv = 0
+                        else:
+                            no_improv += 1
+                        if no_improv >= self.no_improv_break:
+                            break
+                    else:
+                        if early_stopper.update(current_best):
+                            break
+
+                    centroid = np.mean(simplex[:-1], axis=0)
+                    worst = simplex[-1]
+
+                    # Build candidate vertices
+                    xr = centroid + self.alpha * (centroid - worst)  # reflection
+                    xe = centroid + self.gamma * (xr - centroid)  # expansion
+                    xoc = centroid + self.beta * (xr - centroid)  # outside contraction
+                    xic = centroid + self.delta * (worst - centroid)  # inside contraction
+
+                    fe: float | None
+                    foc: float | None
+                    fic: float | None
+                    if (
+                        parallel
+                        and executor is not None
+                        and self.parallel_poll_points
+                    ):
+                        if _supports_map_kw:
+                            fr, fe, foc, fic = self._eval_points(
+                                evaluate,
+                                [xr, xe, xoc, xic],
+                                executor,
+                                manual_count,
+                                map_input=eval_map,
+                            )
+                        else:
+                            fr, fe, foc, fic = self._eval_points(
+                                evaluate,
+                                [xr, xe, xoc, xic],
+                                executor,
+                                manual_count,
+                            )
+                    else:
+                        if _supports_map_kw:
+                            fr = self._eval_points(
+                                evaluate,
+                                [xr],
+                                executor,
+                                manual_count,
+                                map_input=eval_map,
+                            )[0]
+                        else:
+                            fr = self._eval_points(
+                                evaluate,
+                                [xr],
+                                executor,
+                                manual_count,
+                            )[0]
+                        fe = foc = fic = None
+
+                    # Decision tree (textbook Nelder–Mead)
+                    if fvals[0] <= fr < fvals[-2]:
+                        simplex[-1] = xr
+                        fvals[-1] = fr
+                        continue
+
+                    if fr < fvals[0]:
+                        if fe is None:
+                            if _supports_map_kw:
+                                fe = self._eval_points(
+                                    evaluate,
+                                    [xe],
+                                    executor,
+                                    manual_count,
+                                    map_input=eval_map,
+                                )[0]
+                            else:
+                                fe = self._eval_points(
+                                    evaluate,
+                                    [xe],
+                                    executor,
+                                    manual_count,
+                                )[0]
+                        if fe < fr:
+                            simplex[-1] = xe
+                            fvals[-1] = fe
+                        else:
+                            simplex[-1] = xr
+                            fvals[-1] = fr
+                        continue
+
+                    if fvals[-2] <= fr < fvals[-1]:
+                        if foc is None:
+                            if _supports_map_kw:
+                                foc = self._eval_points(
+                                    evaluate,
+                                    [xoc],
+                                    executor,
+                                    manual_count,
+                                    map_input=eval_map,
+                                )[0]
+                            else:
+                                foc = self._eval_points(
+                                    evaluate,
+                                    [xoc],
+                                    executor,
+                                    manual_count,
+                                )[0]
+                        if foc <= fr:
+                            simplex[-1] = xoc
+                            fvals[-1] = foc
+                            continue
+
+                    if fic is None:
+                        if _supports_map_kw:
+                            fic = self._eval_points(
+                                evaluate,
+                                [xic],
+                                executor,
+                                manual_count,
+                                map_input=eval_map,
+                            )[0]
+                        else:
+                            fic = self._eval_points(
+                                evaluate,
+                                [xic],
+                                executor,
+                                manual_count,
+                            )[0]
+                    if fic < fvals[-1]:
+                        simplex[-1] = xic
+                        fvals[-1] = fic
+                        continue
+
+                    # Shrink
+                    new_points = [simplex[0]]
+                    for p in simplex[1:]:
+                        new_points.append(simplex[0] + self.sigma * (p - simplex[0]))
+                    if _supports_map_kw:
+                        new_f = self._eval_points(
+                            evaluate,
+                            new_points[1:],
+                            executor,
+                            manual_count,
+                            map_input=eval_map,
+                        )
+                    else:
+                        new_f = self._eval_points(
+                            evaluate,
+                            new_points[1:],
+                            executor,
+                            manual_count,
+                        )
+                    simplex = new_points
+                    fvals = [fvals[0]] + list(new_f)
+        except nm_impl.EvaluationBudgetExceeded:
+            nm_impl.logger.info(
+                "Nelder-Mead stopped after reaching the evaluation budget"
+            )
+        finally:
+            self._clear_budget()
+
+        # -------------------------- done -------------------------------
+        if fvals:
+            idx = int(np.argmin(fvals))
+            best_x = simplex[idx]
+            best_f = float(fvals[idx])
         else:
-            fvals = [float(val) for val in provided_fvals]
-
-        self._log_simplex_state(0, simplex, fvals, normalize_transform)
-        self.record(simplex[0], tag="0")
-
-        iteration = 0
-        while True:
-            order = np.argsort(fvals)
-            simplex = [simplex[i] for i in order]
-            fvals = [fvals[i] for i in order]
-            self._log_simplex_state(iteration, simplex, fvals, normalize_transform)
-            self.record(simplex[0], tag=str(iteration))
-
-            if max_evals is not None and len(fvals) >= max_evals:
-                break
-            if early_stopper is not None and early_stopper(fvals):
-                break
-
-            centroid = np.mean(simplex[:-1], axis=0)
-            worst = simplex[-1]
-
-            xr = centroid + self.alpha * (centroid - worst)
-            fr = float(objective(space.project(xr)))
-            if fr < fvals[0]:
-                xe = centroid + self.gamma * (xr - centroid)
-                fe = float(objective(space.project(xe)))
-                if fe < fr:
-                    simplex[-1] = xe
-                    fvals[-1] = fe
-                else:
-                    simplex[-1] = xr
-                    fvals[-1] = fr
-            elif fr < fvals[-2]:
-                simplex[-1] = xr
-                fvals[-1] = fr
+            best_eval_point, best_eval_value = self._get_best_evaluation()
+            if best_eval_point is not None and best_eval_value is not None:
+                best_x = best_eval_point
+                best_f = float(best_eval_value)
             else:
-                xc = centroid + self.rho * (worst - centroid)
-                fc = float(objective(space.project(xc)))
-                if fc < fvals[-1]:
-                    simplex[-1] = xc
-                    fvals[-1] = fc
-                else:
-                    xic = simplex[0] + self.sigma * (simplex[1:] - simplex[0])
-                    simplex = [simplex[0]] + [np.asarray(pt, dtype=float) for pt in xic]
-                    fvals = [fvals[0]] + [
-                        float(objective(space.project(pt))) for pt in simplex[1:]
-                    ]
+                best_x = x0
+                best_f = float("nan")
 
-            iteration += 1
-            if verbose:
-                print(f"[nm] iter={iteration:03d} best={fvals[0]:.6g}")
-
-        best_idx = int(np.argmin(fvals))
-        best_x = simplex[best_idx]
-        best_f = fvals[best_idx]
-        if normalize_transform is not None:
+        best_x = np.asarray(best_x, dtype=float)
+        # Map result/history back to original coordinates if we normalized
+        if normalize and normalize_transform is not None:
             best_x = normalize_transform.from_unit(best_x)
-
-        return nm_impl.OptResult(
-            best_x=np.asarray(best_x, dtype=float),
+        best_x = np.asarray(best_x, dtype=float).copy()
+        self.finalize_history()
+        result = nm_impl.OptResult(
+            best_x=best_x,
             best_f=float(best_f),
-            nfev=len(fvals),
-            simplex_history=self.history(),
-            optimizer="Nelder-Mead",
+            history=self.history,
+            evaluations=self.evaluations,
+            nfev=self.nfev,
         )
+        return result
+
 
 def _pop_tracked_run_dir(tcpc_module) -> Optional[Path]:
     """Return the latest run directory registered for the current thread."""
