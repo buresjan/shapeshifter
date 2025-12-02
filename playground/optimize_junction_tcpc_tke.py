@@ -76,7 +76,7 @@ from run_junction_tcpc import (
 # ---------------------------------------------------------------------------
 # Fixed configuration (edit here, no CLI)
 # ---------------------------------------------------------------------------
-RESOLUTION = 6
+RESOLUTION = 5
 MAX_EVALS = 70
 PARAMETER_NAMES = ("offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare")
 
