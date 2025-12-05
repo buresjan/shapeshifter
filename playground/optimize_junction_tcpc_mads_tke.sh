@@ -10,7 +10,7 @@
 #SBATCH --time=168:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus=1
-#SBATCH --mem=60G
+#SBATCH --mem=32G
 #SBATCH --output=opt-tcpc-tke-mads-%j.out
 # Append to stdout/stderr instead of truncating on restart/requeue
 # (prevents losing earlier logs when Restarts>0)
