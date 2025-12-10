@@ -96,8 +96,8 @@ def main() -> Tuple[np.ndarray, float]:
         n_workers=N_WORKERS,
         memoize=True,
         parallel_poll_points=True,
-        no_improve_thr=NO_IMPROV_THR,
-        no_improve_break=NO_IMPROV_BREAK,
+        no_improv_thr=NO_IMPROV_THR,
+        no_improv_break=NO_IMPROV_BREAK,
         penalty=GEOMETRY_PENALTY,
         log_simplex=LOG_SIMPLEX,
     )
