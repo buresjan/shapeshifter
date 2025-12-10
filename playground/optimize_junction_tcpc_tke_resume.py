@@ -97,7 +97,7 @@ def main() -> Tuple[np.ndarray, float]:
         memoize=True,
         parallel_poll_points=True,
         no_improve_thr=NO_IMPROV_THR,
-        no_improve_break=NO_IMPROV_BREAK,
+        no_improv_break=NO_IMPROV_BREAK,
         penalty=GEOMETRY_PENALTY,
         log_simplex=LOG_SIMPLEX,
     )
@@ -122,7 +122,7 @@ def main() -> Tuple[np.ndarray, float]:
     )
     print(
         f"[opt] resolution={RESOLUTION}, no_improve_thr={NO_IMPROV_THR} "
-        f"(break={NO_IMPROV_BREAK})"
+        f"(no_improv_break={NO_IMPROV_BREAK})"
     )
     res = problem.run()
 
