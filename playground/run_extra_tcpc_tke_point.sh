@@ -15,7 +15,7 @@
 #SBATCH --job-name=tcpc-extra-tke-point
 #SBATCH --time=48:00:00
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=60G
+#SBATCH --mem=16G
 #SBATCH --output=tcpc-extra-tke-%j.out
 # Append to stdout/stderr instead of truncating on restart/requeue
 # (prevents losing earlier logs when Restarts>0)
