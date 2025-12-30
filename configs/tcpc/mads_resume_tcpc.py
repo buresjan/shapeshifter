@@ -1,0 +1,48 @@
+CONFIG = {
+    "label": "mads_tcpc_resume",
+    "algorithm_label": "mads",
+    "objective_kind": "tcpc",
+    "resolution": 4,
+    "max_evals": 50,
+    "geometry_penalty": 1.0e9,
+    "space": {
+        "names": ("offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare"),
+        "x0": [-0.001, 4.0, -3.0, 0.0025, 0.00125],
+        "lower": [-0.0100, -0.5, -7.7025, 0.001875, 0.000625],
+        "upper": [0.0080, 8.5, -1.0875, 0.0025, 0.001375],
+    },
+    "optimizer": {
+        "type": "mads",
+        "n_workers": None,
+        "cache_round": None,
+        "subprocess": True,
+    },
+    "solver": {
+        "binary_name": "sim_tcpc_2",
+        "slurm": {
+            "partition": None,
+            "gpus": 1,
+            "cpus": 8,
+            "mem": "60G",
+            "walltime": "20:00:00",
+            "poll_interval": 60.0,
+            "avg_window": 1.0,
+            "verbose": False,
+        },
+    },
+    "split": {
+        "time_index": -1,
+        "min_fraction": 0.25,
+        "write_vtp": False,
+        "write_debug_points": False,
+    },
+    "submit": {
+        "job_name": "mads-opt-tcpc-resume",
+        "time": "168:00:00",
+        "cpus": 8,
+        "gpus": 1,
+        "mem": "60G",
+        "output": "opt-tcpc-mads-resume-%j.out",
+        "open_mode": "append",
+    },
+}

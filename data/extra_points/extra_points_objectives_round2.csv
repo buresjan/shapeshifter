@@ -1,0 +1,11 @@
+case_label,direction,sign,offset,lower_angle,upper_angle,lower_flare,upper_flare,objective,status,algorithm,run_tag,slurm_job_id,job_name,timestamp_iso8601
+offset_minus_r2,offset,minus,-0.00355224,-1.78876,6.1525,0.00196229,0.00142384,0.013193091343499995,ok,extra_points_round2,extra_points_round2,16393,tcpc-extra-point,2025-11-30T22:02:38.693846
+offset_plus_r2,offset,plus,-0.00315224,-1.78876,6.1525,0.00196229,0.00142384,0.013048632600999997,ok,extra_points_round2,extra_points_round2,16394,tcpc-extra-point,2025-12-01T04:18:22.187831
+lower_angle_minus_r2,lower_angle,minus,-0.00335224,-2.08876,6.1525,0.00196229,0.00142384,0.012986745423000004,ok,extra_points_round2,extra_points_round2,16395,tcpc-extra-point,2025-12-01T04:29:19.237994
+lower_angle_plus_r2,lower_angle,plus,-0.00335224,-1.48876,6.1525,0.00196229,0.00142384,0.014324577127999998,ok,extra_points_round2,extra_points_round2,16396,tcpc-extra-point,2025-12-01T05:35:13.090872
+upper_angle_minus_r2,upper_angle,minus,-0.00335224,-1.78876,5.8525,0.00196229,0.00142384,0.013142081613000003,ok,extra_points_round2,extra_points_round2,16397,tcpc-extra-point,2025-12-01T08:15:28.335778
+upper_angle_plus_r2,upper_angle,plus,-0.00335224,-1.78876,6.4525,0.00196229,0.00142384,0.012998088966499994,ok,extra_points_round2,extra_points_round2,16398,tcpc-extra-point,2025-12-01T12:18:04.655976
+lower_flare_minus_r2,lower_flare,minus,-0.00335224,-1.78876,6.1525,0.00193729,0.00142384,0.013032986566500007,ok,extra_points_round2,extra_points_round2,16399,tcpc-extra-point,2025-12-01T12:26:57.179985
+lower_flare_plus_r2,lower_flare,plus,-0.00335224,-1.78876,6.1525,0.00198729,0.00142384,0.014785188178000001,ok,extra_points_round2,extra_points_round2,16400,tcpc-extra-point,2025-12-01T13:08:44.549439
+upper_flare_minus_r2,upper_flare,minus,-0.00335224,-1.78876,6.1525,0.00196229,0.00139884,0.0130702923135,ok,extra_points_round2,extra_points_round2,16401,tcpc-extra-point,2025-12-01T16:24:56.142097
+upper_flare_plus_r2,upper_flare,plus,-0.00335224,-1.78876,6.1525,0.00196229,0.00144884,0.014505097654000003,ok,extra_points_round2,extra_points_round2,16402,tcpc-extra-point,2025-12-01T20:18:25.234772

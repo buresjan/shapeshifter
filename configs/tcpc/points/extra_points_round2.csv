@@ -1,0 +1,11 @@
+direction,sign,offset,lower_angle,upper_angle,lower_flare,upper_flare,case_label
+offset,minus,-0.00355224,-1.78876,6.15250,0.00196229,0.00142384,offset_minus_r2
+offset,plus,-0.00315224,-1.78876,6.15250,0.00196229,0.00142384,offset_plus_r2
+lower_angle,minus,-0.00335224,-2.08876,6.15250,0.00196229,0.00142384,lower_angle_minus_r2
+lower_angle,plus,-0.00335224,-1.48876,6.15250,0.00196229,0.00142384,lower_angle_plus_r2
+upper_angle,minus,-0.00335224,-1.78876,5.85250,0.00196229,0.00142384,upper_angle_minus_r2
+upper_angle,plus,-0.00335224,-1.78876,6.45250,0.00196229,0.00142384,upper_angle_plus_r2
+lower_flare,minus,-0.00335224,-1.78876,6.15250,0.00193729,0.00142384,lower_flare_minus_r2
+lower_flare,plus,-0.00335224,-1.78876,6.15250,0.00198729,0.00142384,lower_flare_plus_r2
+upper_flare,minus,-0.00335224,-1.78876,6.15250,0.00196229,0.00139884,upper_flare_minus_r2
+upper_flare,plus,-0.00335224,-1.78876,6.15250,0.00196229,0.00144884,upper_flare_plus_r2

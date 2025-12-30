@@ -1,0 +1,11 @@
+case_label,direction,sign,offset,lower_angle,upper_angle,lower_flare,upper_flare,objective,status,algorithm,run_tag,slurm_job_id,job_name,timestamp_iso8601
+offset_plus,offset,plus,-0.002352,-1.78876,6.1525,0.00196229,0.00142384,0.014949983911999996,ok,extra_points,extra_points,16367,tcpc-extra-point,2025-11-30T04:20:09.773866
+offset_minus,offset,minus,-0.004352,-1.78876,6.1525,0.00196229,0.00142384,0.013004098328000004,ok,extra_points,extra_points,16368,tcpc-extra-point,2025-11-30T04:32:10.009576
+lower_angle_minus,lower_angle,minus,-0.003352,-3.28876,6.1525,0.00196229,0.00142384,0.012940092640499994,ok,extra_points,extra_points,16370,tcpc-extra-point,2025-11-30T05:26:09.938058
+lower_angle_plus,lower_angle,plus,-0.003352,-0.28876,6.1525,0.00196229,0.00142384,0.014631344283,ok,extra_points,extra_points,16369,tcpc-extra-point,2025-11-30T06:25:49.519317
+upper_angle_plus,upper_angle,plus,-0.003352,-1.78876,7.6525,0.00196229,0.00142384,0.013113303979999998,ok,extra_points,extra_points,16371,tcpc-extra-point,2025-11-30T12:20:34.329370
+upper_angle_minus,upper_angle,minus,-0.003352,-1.78876,4.6525,0.00196229,0.00142384,0.015501759720000003,ok,extra_points,extra_points,16372,tcpc-extra-point,2025-11-30T12:32:34.636745
+lower_flare_plus,lower_flare,plus,-0.003352,-1.78876,6.1525,0.00208729,0.00142384,0.012899948870500005,ok,extra_points,extra_points,16373,tcpc-extra-point,2025-11-30T13:37:44.772016
+upper_flare_plus,upper_flare,plus,-0.003352,-1.78876,6.1525,0.00196229,0.00154884,0.0129309251095,ok,extra_points,extra_points,16375,tcpc-extra-point,2025-11-30T17:50:03.069262
+upper_flare_minus,upper_flare,minus,-0.003352,-1.78876,6.1525,0.00196229,0.00129884,0.014234936372999999,ok,extra_points,extra_points,16376,tcpc-extra-point,2025-11-30T20:19:01.471622
+lower_flare_minus,lower_flare,minus,-0.003352,-1.78876,6.1525,0.00183729,0.00142384,0.013938189658999994,ok,extra_points,extra_points,16374,tcpc-extra-point,2025-11-30T20:30:58.042845

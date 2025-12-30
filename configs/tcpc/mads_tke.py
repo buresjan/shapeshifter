@@ -1,0 +1,48 @@
+CONFIG = {
+    "label": "mads_tcpc_tke",
+    "algorithm_label": "mads_tke",
+    "objective_kind": "tke",
+    "resolution": 5,
+    "max_evals": 40,
+    "geometry_penalty": 1.0e9,
+    "space": {
+        "names": ("offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare"),
+        "x0": [0.001, 4.0, -3.0, 0.001, 0.001],
+        "lower": [-0.01, -15.0, -15.0, 0.0, 0.0],
+        "upper": [0.01, 15.0, 15.0, 0.0025, 0.0025],
+    },
+    "optimizer": {
+        "type": "mads",
+        "n_workers": None,
+        "cache_round": None,
+        "subprocess": True,
+    },
+    "solver": {
+        "binary_name": "sim_tcpc_tke",
+        "slurm": {
+            "partition": None,
+            "gpus": 1,
+            "cpus": 8,
+            "mem": "16G",
+            "walltime": "22:00:00",
+            "poll_interval": 60.0,
+            "avg_window": 1.0,
+            "verbose": False,
+        },
+    },
+    "split": {
+        "time_index": -1,
+        "min_fraction": 0.25,
+        "write_vtp": False,
+        "write_debug_points": False,
+    },
+    "submit": {
+        "job_name": "mads-opt-tcpc-tke",
+        "time": "168:00:00",
+        "cpus": 8,
+        "gpus": 1,
+        "mem": "16G",
+        "output": "opt-tcpc-tke-mads-%j.out",
+        "open_mode": "append",
+    },
+}
