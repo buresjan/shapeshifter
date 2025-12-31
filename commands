@@ -1,0 +1,22 @@
+1.
+python3 scripts/tcpc_collect_points.py \
+  --config configs/tcpc/mads_tcpc.py \
+  --points-csv configs/tcpc/points/extra_points_mads_sr_corner_lf_m05.csv \
+  --csv data/junction_tcpc_logs/merged/extra_points_mads_sr_corner_lf_m05.csv \
+  --algorithm-label extra_points_mads_sr_corner_lf_m05 \
+  --run-tag extra_points_mads_sr_corner_lf_m05 \
+  --job-name tcpc-extra-mads-sr-corner-lf-m05 \
+  --time 24:00:00 --cpus 8 --gpus 1 --mem 16G
+
+2.
+python3 scripts/tcpc_collect_points.py \
+  --config configs/tcpc/nm_tcpc.py \
+  --points-csv configs/tcpc/points/extra_points_nelder_mead_sr_axial_corners.csv \
+  --csv data/junction_tcpc_logs/merged/extra_points_nelder_mead_sr_axial_corners.csv \
+  --algorithm-label extra_points_nelder_mead_sr_axial_corners \
+  --run-tag extra_points_nelder_mead_sr_axial_corners \
+  --job-name tcpc-extra-nm-sr-axial-corners \
+  --time 24:00:00 --cpus 8 --gpus 1 --mem 16G
+
+3.
+python3 scripts/tcpc_submit.py --config configs/tcpc/nm_tke_resume2.py

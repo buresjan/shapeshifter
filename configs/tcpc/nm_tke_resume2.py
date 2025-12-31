@@ -47,7 +47,7 @@ CONFIG = {
         "time": "168:00:00",
         "cpus": 8,
         "gpus": 1,
-        "mem": "320G",
+        "mem": "16G",
         "output": "opt-tcpc-tke-nm-resume2-%j.out",
         "open_mode": "append",
     },
