@@ -1,0 +1,9 @@
+direction,sign,offset,lower_angle,upper_angle,lower_flare,upper_flare,case_label
+corner_lf_m05,1,7.2e-05,5.446,-1.48677,0.00243687,0.001366,corner_lf_m05_1
+corner_lf_m05,2,7.2e-05,5.446,-1.48677,0.00243687,0.001116,corner_lf_m05_2
+corner_lf_m05,3,7.2e-05,2.446,-4.48677,0.00243687,0.001116,corner_lf_m05_3
+corner_lf_m05,4,7.2e-05,2.446,-4.48677,0.00243687,0.001366,corner_lf_m05_4
+corner_lf_m05,5,-0.001928,5.446,-4.48677,0.00243687,0.001116,corner_lf_m05_5
+corner_lf_m05,6,-0.001928,5.446,-4.48677,0.00243687,0.001366,corner_lf_m05_6
+corner_lf_m05,7,-0.001928,2.446,-1.48677,0.00243687,0.001116,corner_lf_m05_7
+corner_lf_m05,8,-0.001928,2.446,-1.48677,0.00243687,0.001366,corner_lf_m05_8
