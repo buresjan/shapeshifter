@@ -13,7 +13,7 @@ CONFIG = {
     },
     "optimizer": {
         "type": "nelder_mead",
-        "n_workers": 8,
+        "n_workers": 4,
         "memoize": True,
         "parallel_poll_points": True,
         "log_simplex": True,
@@ -45,9 +45,9 @@ CONFIG = {
     "submit": {
         "job_name": "nm-opt-tcpc-tke-resume2",
         "time": "168:00:00",
-        "cpus": 8,
-        "gpus": 1,
-        "mem": "16G",
+        "cpus": 4,
+        "gpus": None,
+        "mem": "4G",
         "output": "opt-tcpc-tke-nm-resume2-%j.out",
         "open_mode": "append",
     },
