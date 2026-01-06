@@ -24,7 +24,7 @@ CONFIG = {
             "partition": None,
             "gpus": 1,
             "cpus": 8,
-            "mem": "32G",
+            "mem": "16G",
             "walltime": "20:00:00",
             "poll_interval": 60.0,
             "avg_window": 1.0,
