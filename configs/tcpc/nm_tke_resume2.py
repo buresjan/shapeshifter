@@ -14,6 +14,8 @@ CONFIG = {
     "optimizer": {
         "type": "nelder_mead",
         "n_workers": 4,
+        "parallel": True,
+        "force_thread_pool": True,
         "memoize": True,
         "parallel_poll_points": True,
         "log_simplex": True,

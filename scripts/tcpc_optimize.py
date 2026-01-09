@@ -57,6 +57,17 @@ def _resolve_log_simplex(default: bool) -> bool:
     return default
 
 
+def _resolve_force_thread_pool(optimizer_cfg: dict) -> bool:
+    if "OPTILB_FORCE_THREAD_POOL" in os.environ:
+        return _env_bool("OPTILB_FORCE_THREAD_POOL", False)
+    return bool(optimizer_cfg.get("force_thread_pool", False))
+
+
+def _apply_force_thread_pool(enabled: bool) -> None:
+    if enabled:
+        os.environ["OPTILB_FORCE_THREAD_POOL"] = "1"
+
+
 def _normalize_config(raw: dict, *, algorithm_label_override: Optional[str]) -> dict:
     cfg = dict(raw)
 
@@ -698,6 +709,8 @@ def main() -> Tuple[np.ndarray, float]:
     verbose = bool(optimizer_cfg.get("verbose", True))
 
     if optimizer_type == "nelder_mead":
+        force_thread_pool = bool(parallel) and _resolve_force_thread_pool(optimizer_cfg)
+        _apply_force_thread_pool(force_thread_pool)
         log_simplex = _resolve_log_simplex(bool(optimizer_cfg.get("log_simplex", False)))
         nm_kwargs = {
             "n_workers": workers,
@@ -749,6 +762,7 @@ def main() -> Tuple[np.ndarray, float]:
         print("[opt] Starting Nelder-Mead optimization")
         print(
             f"[opt] max_evals={max_evals}, workers={workers}, normalize={normalize}, "
+            f"parallel={parallel}, force_threads={force_thread_pool}, "
             f"memoize={bool(optimizer_cfg.get('memoize', True))}, log_simplex={log_simplex}"
         )
         if optimizer_cfg.get("no_improve_thr") is not None:
@@ -831,7 +845,8 @@ def main() -> Tuple[np.ndarray, float]:
 
         print("[opt] Starting MADS optimization")
         print(
-            f"[opt] max_evals={max_evals}, workers={workers}, normalize={normalize}, memoize=True"
+            f"[opt] max_evals={max_evals}, workers={workers}, normalize={normalize}, "
+            f"parallel={parallel}, memoize=True"
         )
     else:
         raise ValueError(f"Unsupported optimizer type '{optimizer_type}'")

@@ -16,6 +16,7 @@ CONFIG = {
     "optimizer": {
         "type": "mads",
         "n_workers": 8,
+        "parallel": True,
         "cache_round": 12,
         "subprocess": True,
         "cache_seed": [

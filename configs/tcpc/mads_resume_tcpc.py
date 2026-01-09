@@ -13,7 +13,8 @@ CONFIG = {
     },
     "optimizer": {
         "type": "mads",
-        "n_workers": None,
+        "n_workers": 8,
+        "parallel": True,
         "cache_round": None,
         "subprocess": True,
     },
