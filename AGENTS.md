@@ -1,31 +1,43 @@
 # Shapeshifter — Agent Guide
 
-## Purpose
+## Intent
 Script-only playground for **optimization → geometry generation → LBM simulation**.  
-Use local submodules as the single source of truth.
+Treat local submodules as the single source of truth.
 
-## Submodules (use these)
-- `submodules/optilb/` — optimization routines and problem wrapper.
-- `submodules/lb2dgeom/` — parametric 2D geometry for the LBM domain.
-- `submodules/meshgen/` — voxel-based 3D geometry builder for lattice-ready domains.
-- `submodules/tnl-lbm/` — LBM solver (C++/CUDA), run as an external binary.
+## Repository map (top-level)
+- `scripts/` — entry-point Python/shell scripts (TCPC pipelines, demos, helpers like `tcpc_common.py`).
+- `configs/` — run configs; primary set is `configs/tcpc/` with points CSVs and resumes.
+- `data/` — run outputs and logs (e.g., junction TCPC logs, merged CSVs).
+- `playground/` — exploratory experiments and archives (not production pipelines).
+- `commands` — saved CLI invocations for long-running jobs.
+- `submodules/` — core engines:
+  - `optilb/` optimization routines and problem wrappers.
+  - `lb2dgeom/` parametric 2D geometry for LBM domains.
+  - `meshgen/` voxel-based 3D geometry builder (only when 3D is required).
+  - `tnl-lbm/` LBM solver (C++/CUDA), run as an external binary.
+- `requirements.txt` — editable submodules + shared scientific stack.
 
-## Agent rules
-1. Prefer **only** these libs: `optilb`, `lb2dgeom`, `meshgen`, `numpy`, `scipy`, `matplotlib`. Reach for `meshgen` only when a 3D lattice is required.
-2. **Read** submodule code and APIs before proposing changes. Reuse existing functions.
-3. Do **not** add new Python dependencies. Do **not** modify submodules; write helper scripts here.
-4. Assume the flow:
-   - Build geometry with `lb2dgeom` from a parameter vector (or `meshgen` for voxelized 3D studies).
-   - Invoke `tnl-lbm` via `subprocess.run(...)`, capture a scalar objective.
-   - Wrap the loop with `optilb.OptimizationProblem` (or equivalent).
-5. Keep paths simple: write geometry to a local working folder; symlink/copy into `tnl-lbm` case if required.
+## Default workflow (2D)
+1. Choose or create a config in `configs/tcpc/`.
+2. Generate geometry with `lb2dgeom` inside a `scripts/` runner.
+3. Invoke `tnl-lbm` via `subprocess.run(...)`, parse a scalar objective.
+4. Wrap the loop with `optilb.OptimizationProblem` (or equivalent) and persist outputs in `data/`.
+
+## 3D workflow (only when needed)
+- Use `meshgen` to build a voxelized lattice, then reuse the same `tnl-lbm` + `optilb` loop.
+
+## Agent rules (non-negotiable)
+1. Prefer **only** these libs: `optilb`, `lb2dgeom`, `meshgen`, `numpy`, `scipy`, `matplotlib`.
+2. **Read** submodule APIs before changing scripts; reuse existing helpers.
+3. Do **not** add new Python dependencies without asking. Do **not** modify submodules; add helpers in this repo.
+4. Keep paths simple: write geometry to a local working folder; symlink/copy into a `tnl-lbm` case if required.
+5. Fail loud on errors; no silent fallbacks.
 
 ## Quality bar
 - Provide **correct, runnable** scripts.
 - Explain assumptions briefly in comments.
 - Validate I/O contracts: file paths exist, binary exits `0`, objective is parsed to `float`.
-- Fail loud on errors; no silent fallbacks.
 
 ## Minimal environment
-- Python venv with `pip install -r requirements.txt` (installs the editable submodules).
+- Python venv with `pip install -r requirements.txt` (installs editable submodules).
 - `tnl-lbm` built separately (CMake); treat as a CLI tool.
