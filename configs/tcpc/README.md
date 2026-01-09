@@ -6,6 +6,13 @@ Overview
 - Extra-point evaluations use `scripts/tcpc_extra_point.py` (single) or `scripts/tcpc_collect_points.py` (batch).
 - Predefined point lists live in `configs/tcpc/points/`.
 
+Parallel execution policy
+- All TCPC optimizations are intended to run in parallel by default.
+- New configs should always set `optimizer.parallel: True` explicitly (even though the code defaults to true).
+- Set `optimizer.n_workers` to match `submit.cpus` for maximum concurrent evaluations.
+- For Nelder-Mead, set `optimizer.force_thread_pool: True` (or `OPTILB_FORCE_THREAD_POOL=1`) to guarantee parallel evals with the current objective wiring.
+- For MADS, parallelism is controlled by PyNomad threads (`optimizer.n_workers`) and `optimizer.parallel: True`.
+
 Prerequisites
 - Build the tnl-lbm solver (binaries under `submodules/tnl-lbm/build/sim_NSE/`).
 - Use the repo venv (`pip install -r requirements.txt`) so submodules are importable.
@@ -52,6 +59,8 @@ Config reference (common fields)
 - `optimizer`:
   - `type`: `nelder_mead` or `mads`.
   - `n_workers`: Worker count (use `null` to defer to env vars).
+  - `parallel`: Enable parallel evaluations (default true; keep it on for new configs).
+  - `force_thread_pool`: Force threaded evaluation for Nelder-Mead (avoids pickling issues).
   - `memoize`, `parallel_poll_points`, `log_simplex`: NM controls.
   - `no_improve_thr`, `no_improv_break`, `tol`, `penalty`: NM stop/penalty settings.
   - `initial_simplex`, `initial_simplex_values`: NM resume in-config.
@@ -71,6 +80,7 @@ Config reference (common fields)
 
 Environment overrides (optional)
 - `OPT_NM_WORKERS`, `OPT_MADS_WORKERS` to override worker counts.
+- `OPTILB_FORCE_THREAD_POOL=1` to force threaded evaluation for Nelder-Mead.
 - `TCPC_RUN_TAG` to group run artifacts.
 - `TCPC_SLURM_*` to override solver-job resources in `run_tcpc_simulation.py`:
   `TCPC_SLURM_PARTITION`, `TCPC_SLURM_GPUS`, `TCPC_SLURM_CPUS`, `TCPC_SLURM_MEM`,
