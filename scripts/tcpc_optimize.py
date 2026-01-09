@@ -60,7 +60,9 @@ def _resolve_log_simplex(default: bool) -> bool:
 def _resolve_force_thread_pool(optimizer_cfg: dict) -> bool:
     if "OPTILB_FORCE_THREAD_POOL" in os.environ:
         return _env_bool("OPTILB_FORCE_THREAD_POOL", False)
-    return bool(optimizer_cfg.get("force_thread_pool", False))
+    if "force_thread_pool" in optimizer_cfg:
+        return bool(optimizer_cfg.get("force_thread_pool"))
+    return True
 
 
 def _apply_force_thread_pool(enabled: bool) -> None:
@@ -94,6 +96,8 @@ def _normalize_config(raw: dict, *, algorithm_label_override: Optional[str]) -> 
     optimizer_cfg["type"] = optimizer_type
     optimizer_cfg.setdefault("normalize", True)
     optimizer_cfg.setdefault("parallel", True)
+    if optimizer_type == "nelder_mead":
+        optimizer_cfg.setdefault("force_thread_pool", True)
     optimizer_cfg.setdefault("verbose", True)
 
     solver_cfg = dict(cfg.get("solver") or {})
@@ -707,9 +711,20 @@ def main() -> Tuple[np.ndarray, float]:
     normalize = bool(optimizer_cfg.get("normalize", True))
     parallel = bool(optimizer_cfg.get("parallel", True))
     verbose = bool(optimizer_cfg.get("verbose", True))
+    if parallel and workers < 2:
+        raise ValueError(
+            "parallel=True requires n_workers >= 2; set optimizer.n_workers or OPT_NM_WORKERS."
+        )
 
     if optimizer_type == "nelder_mead":
         force_thread_pool = bool(parallel) and _resolve_force_thread_pool(optimizer_cfg)
+        if parallel and not force_thread_pool:
+            print(
+                "[opt] Parallel tcpc objective requires thread pool; overriding to "
+                "force_thread_pool=True",
+                flush=True,
+            )
+            force_thread_pool = True
         _apply_force_thread_pool(force_thread_pool)
         log_simplex = _resolve_log_simplex(bool(optimizer_cfg.get("log_simplex", False)))
         nm_kwargs = {
