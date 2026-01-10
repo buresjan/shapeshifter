@@ -3,7 +3,7 @@ CONFIG = {
     "algorithm_label": "nelder_mead_tke_resume2",
     "objective_kind": "tke",
     "resolution": 5,
-    "max_evals": 40,
+    "max_evals": 30,
     "geometry_penalty": 1.0e9,
     "space": {
         "names": ("offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare"),
@@ -49,7 +49,7 @@ CONFIG = {
         "time": "168:00:00",
         "cpus": 4,
         "gpus": None,
-        "mem": "4G",
+        "mem": "16G",
         "output": "opt-tcpc-tke-nm-resume2-%j.out",
         "open_mode": "append",
     },

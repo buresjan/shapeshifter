@@ -52,6 +52,10 @@ Config reference (common fields)
 - `resolution`: Voxel/solver resolution.
 - `max_evals`: Evaluation budget.
 - `geometry_penalty`: Value used when geometry/solver fails.
+- `eval_log_root`: Override per-run evaluation log directory (default `tmp/junction_tcpc_logs/`).
+- `eval_log_shared`: Enable shared evaluation CSV logging (default `true`).
+- `eval_log_shared_root`: Directory for shared evaluation CSVs (default `data/junction_tcpc_logs/shared/`).
+- `eval_log_shared_path`: Explicit shared evaluation CSV path (overrides `eval_log_shared_root`).
 - `space`:
   - `names`: Parameter names.
   - `x0`: Starting point.
@@ -125,6 +129,7 @@ python3 scripts/tcpc_collect_points.py \
 
 Where outputs go
 - Evaluation CSV logs: `tmp/junction_tcpc_logs/` (auto-named by label + timestamp).
+- Shared evaluation CSVs: `data/junction_tcpc_logs/shared/` (auto-named by algorithm label).
 - Extra-point CSVs: `tmp/extra_points/` (see config `extra_points.csv_default`).
 - Solver artifacts: `tmp/junction_tcpc_runs/`.
 

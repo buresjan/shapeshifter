@@ -4,6 +4,10 @@
 from __future__ import annotations
 
 import csv
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - fcntl is Unix-only.
+    fcntl = None
 import hashlib
 import importlib.util
 import math
@@ -77,6 +81,9 @@ _EVAL_COUNTERS: Dict[str, int] = {}
 _EVAL_LOG_PATHS: Dict[str, Path] = {}
 _EVAL_TIMESTAMP = ""
 _EVAL_LOG_ROOT = PROJECT_ROOT / "tmp" / "junction_tcpc_logs"
+_EVAL_SHARED_LOG_ENABLED = True
+_EVAL_SHARED_LOG_ROOT = PROJECT_ROOT / "data" / "junction_tcpc_logs" / "shared"
+_EVAL_SHARED_LOG_PATH: Path | None = None
 
 
 def _env_optional_int(var: str, default: int | None) -> int | None:
@@ -111,6 +118,53 @@ def _sanitize_tag(raw: str) -> str:
     return cleaned.strip("_-")
 
 
+def _lock_file(handle) -> None:
+    if fcntl is None:
+        raise RuntimeError(
+            "fcntl is required for shared eval log locking on this platform."
+        )
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+
+def _unlock_file(handle) -> None:
+    if fcntl is None:
+        raise RuntimeError(
+            "fcntl is required for shared eval log locking on this platform."
+        )
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _append_csv_row(
+    path: Path,
+    header: tuple[str, ...],
+    row: tuple[object, ...],
+    *,
+    lock: bool,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+", newline="") as handle:
+        if lock:
+            _lock_file(handle)
+        try:
+            handle.seek(0, os.SEEK_END)
+            new_file = handle.tell() == 0
+            writer = csv.writer(handle)
+            if new_file:
+                writer.writerow(header)
+            writer.writerow(row)
+            handle.flush()
+        finally:
+            if lock:
+                _unlock_file(handle)
+
+
+def _resolve_shared_log_path(algorithm: str) -> Path:
+    if _EVAL_SHARED_LOG_PATH is not None:
+        return _EVAL_SHARED_LOG_PATH
+    safe_label = _sanitize_tag(algorithm) or "run"
+    return _EVAL_SHARED_LOG_ROOT / f"{safe_label}.csv"
+
+
 def configure(settings: dict) -> None:
     """Configure global settings for the objective pipeline."""
     global _CONFIGURED
@@ -139,6 +193,9 @@ def configure(settings: dict) -> None:
     global _EVAL_COUNTERS
     global _EVAL_LOG_PATHS
     global _EVAL_TIMESTAMP
+    global _EVAL_SHARED_LOG_ENABLED
+    global _EVAL_SHARED_LOG_ROOT
+    global _EVAL_SHARED_LOG_PATH
     global _EVAL_LOG_ROOT
 
     OBJECTIVE_KIND = str(settings.get("objective_kind", "tcpc"))
@@ -195,6 +252,46 @@ def configure(settings: dict) -> None:
         _EVAL_LOG_ROOT = eval_path
     else:
         _EVAL_LOG_ROOT = PROJECT_ROOT / "tmp" / "junction_tcpc_logs"
+
+    eval_log_shared = settings.get("eval_log_shared")
+    if eval_log_shared is None:
+        eval_log_shared = True
+    _EVAL_SHARED_LOG_ENABLED = bool(eval_log_shared)
+    if _EVAL_SHARED_LOG_ENABLED and fcntl is None:
+        raise RuntimeError(
+            "Shared eval logging requires fcntl; disable eval_log_shared on this platform."
+        )
+
+    shared_log_path = settings.get("eval_log_shared_path") or os.environ.get(
+        "TCPC_EVAL_LOG_SHARED_PATH"
+    )
+    shared_log_root = settings.get("eval_log_shared_root") or os.environ.get(
+        "TCPC_EVAL_LOG_SHARED_ROOT"
+    )
+    if shared_log_path and shared_log_root:
+        raise ValueError(
+            "Specify only one of eval_log_shared_path or eval_log_shared_root."
+        )
+    if shared_log_path:
+        shared_path = Path(shared_log_path)
+        if shared_path.is_dir():
+            raise ValueError(
+                f"eval_log_shared_path must be a file path, got directory '{shared_path}'."
+            )
+        if not shared_path.is_absolute():
+            shared_path = PROJECT_ROOT / shared_path
+        _EVAL_SHARED_LOG_PATH = shared_path
+        _EVAL_SHARED_LOG_ROOT = shared_path.parent
+    else:
+        shared_root = (
+            Path(shared_log_root)
+            if shared_log_root
+            else PROJECT_ROOT / "data" / "junction_tcpc_logs" / "shared"
+        )
+        if not shared_root.is_absolute():
+            shared_root = PROJECT_ROOT / shared_root
+        _EVAL_SHARED_LOG_ROOT = shared_root
+        _EVAL_SHARED_LOG_PATH = None
 
     _EVAL_COUNTERS = {}
     _EVAL_LOG_PATHS = {}
@@ -441,6 +538,13 @@ def _log_eval(algorithm: str, eval_id: int, x: np.ndarray, value: float) -> Path
     """Append an evaluation record to the per-run CSV log and return its path."""
     log_dir = _EVAL_LOG_ROOT
     log_dir.mkdir(parents=True, exist_ok=True)
+    header = ("eval_id", "objective", *PARAMETER_NAMES, "timestamp_iso8601")
+    row = (
+        eval_id,
+        float(value),
+        *[float(v) for v in np.asarray(x, dtype=float)],
+        datetime.now().isoformat(),
+    )
     with _EVAL_LOCK:
         path = _EVAL_LOG_PATHS.get(algorithm)
         if path is None:
@@ -449,20 +553,13 @@ def _log_eval(algorithm: str, eval_id: int, x: np.ndarray, value: float) -> Path
             path = log_dir / f"{run_label}_{_EVAL_TIMESTAMP}.csv"
             _EVAL_LOG_PATHS[algorithm] = path
 
-        new_file = not path.exists()
-        with path.open("a", newline="") as handle:
-            writer = csv.writer(handle)
-            if new_file:
-                writer.writerow(("eval_id", "objective", *PARAMETER_NAMES, "timestamp_iso8601"))
-            writer.writerow(
-                (
-                    eval_id,
-                    float(value),
-                    *[float(v) for v in np.asarray(x, dtype=float)],
-                    datetime.now().isoformat(),
-                )
-            )
-        return path
+        _append_csv_row(path, header, row, lock=False)
+
+    if _EVAL_SHARED_LOG_ENABLED:
+        shared_path = _resolve_shared_log_path(algorithm)
+        _append_csv_row(shared_path, header, row, lock=True)
+
+    return path
 
 
 def log_eval(algorithm: str, eval_id: int, x: np.ndarray, value: float) -> Path:
