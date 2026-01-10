@@ -88,6 +88,10 @@ def _objective_settings(cfg: dict, algorithm_label: str) -> dict:
         "split": cfg.get("split", {}),
         "run_tag": cfg.get("run_tag"),
         "eval_log_root": cfg.get("eval_log_root"),
+        "eval_log_shared": cfg.get("eval_log_shared"),
+        "eval_log_shared_root": cfg.get("eval_log_shared_root"),
+        "eval_log_shared_path": cfg.get("eval_log_shared_path"),
+        "eval_log_shared_run": cfg.get("eval_log_shared_run"),
         "mpi_accelerator": cfg.get("mpi_accelerator"),
     }
 

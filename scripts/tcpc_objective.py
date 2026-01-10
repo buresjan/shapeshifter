@@ -261,6 +261,9 @@ def configure(settings: dict) -> None:
         raise RuntimeError(
             "Shared eval logging requires fcntl; disable eval_log_shared on this platform."
         )
+    eval_log_shared_run = settings.get("eval_log_shared_run")
+    if eval_log_shared_run is None:
+        eval_log_shared_run = _env_bool("TCPC_EVAL_LOG_SHARED_RUN", False)
 
     shared_log_path = settings.get("eval_log_shared_path") or os.environ.get(
         "TCPC_EVAL_LOG_SHARED_PATH"
@@ -304,6 +307,9 @@ def configure(settings: dict) -> None:
         run_tag_raw = f"run_{uuid.uuid4().hex[:8]}"
     run_tag = _sanitize_tag(str(run_tag_raw))
     _RUN_TAG = f"{run_tag}_" if run_tag else ""
+    if _EVAL_SHARED_LOG_ENABLED and eval_log_shared_run and _EVAL_SHARED_LOG_PATH is None:
+        run_dir = _RUN_TAG.strip("_") or "run"
+        _EVAL_SHARED_LOG_ROOT = _EVAL_SHARED_LOG_ROOT / run_dir
 
     MPI_ACCELERATOR = (
         str(settings.get("mpi_accelerator"))

@@ -9,6 +9,7 @@ import math
 import os
 import threading
 import multiprocessing
+import uuid
 from functools import partial
 from pathlib import Path
 from typing import Callable, Dict, Optional, Sequence, Tuple, cast
@@ -112,6 +113,11 @@ def _normalize_config(raw: dict, *, algorithm_label_override: Optional[str]) -> 
         "resolution": resolution,
         "geometry_penalty": geometry_penalty,
         "max_evals": max_evals,
+        "eval_log_root": cfg.get("eval_log_root"),
+        "eval_log_shared": cfg.get("eval_log_shared"),
+        "eval_log_shared_root": cfg.get("eval_log_shared_root"),
+        "eval_log_shared_path": cfg.get("eval_log_shared_path"),
+        "eval_log_shared_run": cfg.get("eval_log_shared_run"),
         "space": {
             "names": names,
             "x0": space_cfg["x0"],
@@ -124,7 +130,6 @@ def _normalize_config(raw: dict, *, algorithm_label_override: Optional[str]) -> 
         "submit": submit_cfg,
         "extra_points": extra_points_cfg,
         "run_tag": cfg.get("run_tag"),
-        "eval_log_root": cfg.get("eval_log_root"),
         "mpi_accelerator": cfg.get("mpi_accelerator"),
     }
 
@@ -141,8 +146,18 @@ def _objective_settings_from_config(cfg: dict) -> dict:
         "split": cfg["split"],
         "run_tag": cfg.get("run_tag"),
         "eval_log_root": cfg.get("eval_log_root"),
+        "eval_log_shared": cfg.get("eval_log_shared"),
+        "eval_log_shared_root": cfg.get("eval_log_shared_root"),
+        "eval_log_shared_path": cfg.get("eval_log_shared_path"),
+        "eval_log_shared_run": cfg.get("eval_log_shared_run"),
         "mpi_accelerator": cfg.get("mpi_accelerator"),
     }
+
+
+def _ensure_run_tag_env(cfg: dict) -> None:
+    if cfg.get("run_tag") or os.environ.get("TCPC_RUN_TAG"):
+        return
+    os.environ["TCPC_RUN_TAG"] = f"run_{uuid.uuid4().hex[:8]}"
 
 
 def _validate_space(lower: np.ndarray, upper: np.ndarray, x0: np.ndarray) -> None:
@@ -630,6 +645,7 @@ class LoggingNelderMeadOptimizer(NelderMeadOptimizer):
 def _load_and_configure(config_path: Path, algorithm_label: Optional[str]) -> dict:
     raw = load_config(config_path)
     cfg = _normalize_config(raw, algorithm_label_override=algorithm_label)
+    _ensure_run_tag_env(cfg)
     tcpc_objective.configure(_objective_settings_from_config(cfg))
     return cfg
 

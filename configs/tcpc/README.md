@@ -56,6 +56,7 @@ Config reference (common fields)
 - `eval_log_shared`: Enable shared evaluation CSV logging (default `true`).
 - `eval_log_shared_root`: Directory for shared evaluation CSVs (default `data/junction_tcpc_logs/shared/`).
 - `eval_log_shared_path`: Explicit shared evaluation CSV path (overrides `eval_log_shared_root`).
+- `eval_log_shared_run`: When true, append the run tag as a subdirectory under the shared log root.
 - `space`:
   - `names`: Parameter names.
   - `x0`: Starting point.
@@ -86,6 +87,7 @@ Environment overrides (optional)
 - `OPT_NM_WORKERS`, `OPT_MADS_WORKERS` to override worker counts.
 - `OPTILB_FORCE_THREAD_POOL=1` to force threaded evaluation for Nelder-Mead.
 - `TCPC_RUN_TAG` to group run artifacts.
+- `TCPC_EVAL_LOG_SHARED_RUN` to scope shared evaluation logs per run tag.
 - `TCPC_SLURM_*` to override solver-job resources in `run_tcpc_simulation.py`:
   `TCPC_SLURM_PARTITION`, `TCPC_SLURM_GPUS`, `TCPC_SLURM_CPUS`, `TCPC_SLURM_MEM`,
   `TCPC_SLURM_WALLTIME`, `TCPC_SLURM_POLL_INTERVAL`, `TCPC_SLURM_AVG_WINDOW`.
