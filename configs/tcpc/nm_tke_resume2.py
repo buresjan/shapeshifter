@@ -5,6 +5,7 @@ CONFIG = {
     "resolution": 5,
     "max_evals": 30,
     "geometry_penalty": 1.0e9,
+    "eval_log_shared_path": "data/junction_tcpc_logs/shared/nelder_mead_tke_resume2.csv",
     "space": {
         "names": ("offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare"),
         "x0": [-2.2e-3, -1.4, -5.4, 2.475e-3, 9.50e-4],

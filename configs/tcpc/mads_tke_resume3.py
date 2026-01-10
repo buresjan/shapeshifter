@@ -7,6 +7,7 @@ CONFIG = {
     "resolution": 5,
     "max_evals": int(os.environ.get("TCPC_MADS_TKE_RESUME3_MAX_EVALS", "30")),
     "geometry_penalty": 1.0e9,
+    "eval_log_shared_path": "data/junction_tcpc_logs/shared/mads_tke_resume3.csv",
     "space": {
         "names": ("offset", "lower_angle", "upper_angle", "lower_flare", "upper_flare"),
         "x0": [-0.0022, -1.4, -5.4, 0.002475, 0.00095],
