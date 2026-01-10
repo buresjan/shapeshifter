@@ -16,7 +16,7 @@ CONFIG = {
         "type": "nelder_mead",
         "n_workers": 4,
         "parallel": True,
-        "force_thread_pool": True,
+        "force_thread_pool": False,
         "memoize": True,
         "parallel_poll_points": True,
         "log_simplex": True,

@@ -63,7 +63,7 @@ def _resolve_force_thread_pool(optimizer_cfg: dict) -> bool:
         return _env_bool("OPTILB_FORCE_THREAD_POOL", False)
     if "force_thread_pool" in optimizer_cfg:
         return bool(optimizer_cfg.get("force_thread_pool"))
-    return True
+    return False
 
 
 def _apply_force_thread_pool(enabled: bool) -> None:
@@ -98,7 +98,7 @@ def _normalize_config(raw: dict, *, algorithm_label_override: Optional[str]) -> 
     optimizer_cfg.setdefault("normalize", True)
     optimizer_cfg.setdefault("parallel", True)
     if optimizer_type == "nelder_mead":
-        optimizer_cfg.setdefault("force_thread_pool", True)
+        optimizer_cfg.setdefault("force_thread_pool", False)
     optimizer_cfg.setdefault("verbose", True)
 
     solver_cfg = dict(cfg.get("solver") or {})
@@ -650,6 +650,10 @@ def _load_and_configure(config_path: Path, algorithm_label: Optional[str]) -> di
     return cfg
 
 
+def _objective_nm(arr: np.ndarray) -> float:
+    return float(tcpc_objective.objective(np.asarray(arr, dtype=float)))
+
+
 def _cache_key(arr: np.ndarray, digits: Optional[int]) -> Tuple[float, ...]:
     if digits is None:
         return tuple(float(v) for v in arr)
@@ -734,13 +738,6 @@ def main() -> Tuple[np.ndarray, float]:
 
     if optimizer_type == "nelder_mead":
         force_thread_pool = bool(parallel) and _resolve_force_thread_pool(optimizer_cfg)
-        if parallel and not force_thread_pool:
-            print(
-                "[opt] Parallel tcpc objective requires thread pool; overriding to "
-                "force_thread_pool=True",
-                flush=True,
-            )
-            force_thread_pool = True
         _apply_force_thread_pool(force_thread_pool)
         log_simplex = _resolve_log_simplex(bool(optimizer_cfg.get("log_simplex", False)))
         nm_kwargs = {
@@ -765,9 +762,6 @@ def main() -> Tuple[np.ndarray, float]:
             optimize_options["initial_simplex"] = initial_simplex
             optimize_options["initial_simplex_values"] = simplex_values
             print(f"[opt] Using provided initial simplex from '{path}'")
-
-        def _objective_nm(arr: np.ndarray) -> float:
-            return float(tcpc_objective.objective(arr, algorithm=cfg["algorithm_label"]))
 
         tol = optimizer_cfg.get("tol")
         if tol is None and optimizer_cfg.get("no_improve_thr") is not None:

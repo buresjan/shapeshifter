@@ -10,7 +10,7 @@ Parallel execution policy
 - All TCPC optimizations are intended to run in parallel by default.
 - New configs should always set `optimizer.parallel: True` explicitly (even though the code defaults to true).
 - Set `optimizer.n_workers` to match `submit.cpus` for maximum concurrent evaluations.
-- For Nelder-Mead, set `optimizer.force_thread_pool: True` (or `OPTILB_FORCE_THREAD_POOL=1`) to guarantee parallel evals with the current objective wiring.
+- For Nelder-Mead, prefer the default process pool (`optimizer.force_thread_pool: False`) so mesh generation runs in a main thread; only force threads if you know the objective is thread-safe.
 - For MADS, parallelism is controlled by PyNomad threads (`optimizer.n_workers`) and `optimizer.parallel: True`.
 
 Prerequisites
@@ -65,7 +65,7 @@ Config reference (common fields)
   - `type`: `nelder_mead` or `mads`.
   - `n_workers`: Worker count (use `null` to defer to env vars).
   - `parallel`: Enable parallel evaluations (default true; keep it on for new configs).
-  - `force_thread_pool`: Force threaded evaluation for Nelder-Mead (avoids pickling issues).
+  - `force_thread_pool`: Force threaded evaluation for Nelder-Mead (use only if the objective is thread-safe).
   - `memoize`, `parallel_poll_points`, `log_simplex`: NM controls.
   - `no_improve_thr`, `no_improv_break`, `tol`, `penalty`: NM stop/penalty settings.
   - `initial_simplex`, `initial_simplex_values`: NM resume in-config.
