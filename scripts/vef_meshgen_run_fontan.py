@@ -384,7 +384,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--poll-interval",
         type=float,
         default=30.0,
-        help="Seconds between job status checks",
+        help="Seconds between job status checks (only with --wait)",
+    )
+    parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait for the Slurm job to finish and parse the scalar output",
     )
     return parser.parse_args(argv)
 
@@ -511,6 +516,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"[slurm] submitted job {job_id} (run dir: {run_dir})")
+    print(f"[slurm] job script: {sbatch_path}")
+
+    if not args.wait:
+        print("[slurm] submission complete; exiting without waiting for completion")
+        return 0
+
     state = _wait_for_job(job_id, poll_interval=args.poll_interval)
     if state in FAILED_STATES:
         print(f"error: job {job_id} failed with state {state}", file=sys.stderr)
