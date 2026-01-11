@@ -13,7 +13,7 @@ Treat local submodules as the single source of truth.
 - `submodules/` — core engines:
   - `optilb/` optimization routines and problem wrappers.
   - `lb2dgeom/` parametric 2D geometry for LBM domains.
-  - `meshgen/` voxel-based 3D geometry builder (only when 3D is required).
+  - `meshgen/` voxel-based 3D geometry builder (only when 3D is required); includes nested `meshgen/vascular_encoding_framework/` helpers.
   - `tnl-lbm/` LBM solver (C++/CUDA), run as an external binary.
 - `requirements.txt` — editable submodules + shared scientific stack.
 
@@ -27,7 +27,7 @@ Treat local submodules as the single source of truth.
 - Use `meshgen` to build a voxelized lattice, then reuse the same `tnl-lbm` + `optilb` loop.
 
 ## Agent rules (non-negotiable)
-1. Prefer **only** these libs: `optilb`, `lb2dgeom`, `meshgen`, `numpy`, `scipy`, `matplotlib`.
+1. Prefer **only** these libs: `optilb`, `lb2dgeom`, `meshgen`, `vascular_encoding_framework`, `numpy`, `scipy`, `matplotlib`.
 2. **Read** submodule APIs before changing scripts; reuse existing helpers.
 3. Do **not** add new Python dependencies without asking. Do **not** modify submodules; add helpers in this repo.
 4. Keep paths simple: write geometry to a local working folder; symlink/copy into a `tnl-lbm` case if required.
@@ -39,5 +39,5 @@ Treat local submodules as the single source of truth.
 - Validate I/O contracts: file paths exist, binary exits `0`, objective is parsed to `float`.
 
 ## Minimal environment
-- Python venv with `pip install -r requirements.txt` (installs editable submodules).
+- Python venv with `pip install -r requirements.txt` (installs editable submodules including `meshgen/vascular_encoding_framework`; keep `git submodule update --init --recursive` to pull nested submodules).
 - `tnl-lbm` built separately (CMake); treat as a CLI tool.

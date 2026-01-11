@@ -4,7 +4,7 @@ Shapeshifter is a script-oriented playground for optimization-driven lattice Bol
 
 - [`submodules/optilb/`](submodules/optilb/) – optimization problems and solvers that drive geometry updates.
 - [`submodules/lb2dgeom/`](submodules/lb2dgeom/) – parametric 2D geometry generation utilities for LBM domains.
-- [`submodules/meshgen/`](submodules/meshgen/) – 3D geometry templating and voxelization pipelines for simulation-ready lattices (used when exploring volumetric cases).
+- [`submodules/meshgen/`](submodules/meshgen/) – 3D geometry templating and voxelization pipelines for simulation-ready lattices (used when exploring volumetric cases). Includes the nested `submodules/meshgen/vascular_encoding_framework/` helpers used by some meshgen pipelines.
 - [`submodules/tnl-lbm/`](submodules/tnl-lbm/) – C++/CUDA LBM solver that consumes generated geometry and reports objective values.
 
 The typical workflow is:
@@ -21,6 +21,7 @@ The typical workflow is:
    cd shapeshifter
    git submodule update --init --recursive
    ```
+   The `--recursive` flag is required because `meshgen` includes its own nested submodule (`vascular_encoding_framework`).
 2. Build the LBM solver following the instructions in `submodules/tnl-lbm/` if you do not already have a compiled binary.
 
 Check `playground/` for runnable experiments. For example, `playground/run_junction_tcpc.py` generates a mesh with `meshgen`, stages the artefacts in `tnl-lbm`, runs the `sim_tcpc` binary, and prints the objective returned by the solver.
@@ -36,10 +37,10 @@ Check `playground/` for runnable experiments. For example, `playground/run_junct
    ```bash
    pip install -r requirements.txt
    ```
-   The requirements file installs `optilb`, `lb2dgeom`, and `meshgen` in editable mode along with the shared scientific stack (`numpy`, `scipy`, `matplotlib`). `meshgen` brings extra optional tooling (`gmsh`, `trimesh`, `mayavi`, `tqdm`) and may require system packages:
+   The requirements file installs `optilb`, `lb2dgeom`, `meshgen`, and the nested `vascular_encoding_framework` helper in editable mode along with the shared scientific stack (`numpy`, `scipy`, `matplotlib`). `meshgen` brings extra optional tooling (`gmsh`, `trimesh`, `mayavi`, `tqdm`) and may require system packages:
    - Ensure the Gmsh binary is available on your `PATH` (or install it via your package manager).
    - Mayavi relies on Qt/OpenGL; install matching system libraries (e.g., `qtbase5-dev`, `mesa`, vendor GPU drivers) before running the pip install.
-   If you only plan to work with 2D cases, remove or comment out the `-e submodules/meshgen` line in `requirements.txt` before installing.
+   If you only plan to work with 2D cases, remove or comment out the `-e submodules/meshgen` and `-e submodules/meshgen/vascular_encoding_framework` lines in `requirements.txt` before installing.
 
 ## Keeping everything up to date
 
@@ -47,13 +48,17 @@ Check `playground/` for runnable experiments. For example, `playground/run_junct
   ```bash
   git pull
   ```
-- Refresh submodules to their tracked commits:
+- Refresh submodules to their tracked commits (include nested submodules):
   ```bash
-  git submodule update --remote
+  git submodule update --remote --recursive
   ```
   or, for a specific module:
   ```bash
   git submodule update --remote submodules/optilb
+  ```
+  For meshgen, keep the nested submodule in sync:
+  ```bash
+  git submodule update --remote --recursive submodules/meshgen
   ```
 - If you need to modify a submodule, switch into its directory, check out the desired branch, and manage commits there. Push changes from within the submodule, then record the updated commit in the parent repository with `git add submodules/<name>`.
 

@@ -1,0 +1,30 @@
+name: shapeshifter
+channels:
+  - conda-forge
+channel_priority: strict
+dependencies:
+  - python=3.10
+  - numpy
+  - scipy
+  - matplotlib=3.9.*
+  - trimesh
+  - gmsh
+  - mayavi
+  - vtk=9.3.*
+  - pyqt
+  - tqdm
+  - scikit-learn=1.6.*
+  - pillow
+  - pooch
+  - scooby
+  - typing-extensions
+  - requests
+  - pyvista=0.44.*
+  - dash>=2.17.1,<3.0.0
+  - plotly>=5.23.0,<6.0.0
+  - pip
+  - pip:
+      - -e submodules/optilb
+      - -e submodules/lb2dgeom
+      - -e submodules/meshgen
+      - -e submodules/meshgen/vascular_encoding_framework
