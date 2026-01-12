@@ -51,6 +51,7 @@ def update_run_kwargs(
     bump2_amp: float,
     size_scale: float,
     straighten_strength: float,
+    taper_target_scale: Optional[float],
     repair_pitch: float,
     output_dir: Path,
     keep_temp_files: bool,
@@ -65,6 +66,8 @@ def update_run_kwargs(
     bumps[1]["amp"] = float(bump2_amp)
     run_kwargs["size_scale"] = float(size_scale)
     run_kwargs["straighten_strength"] = float(straighten_strength)
+    if taper_target_scale is not None:
+        run_kwargs["taper_target_scale"] = float(taper_target_scale)
     run_kwargs["repair_pitch"] = float(repair_pitch)
     run_kwargs["output_dir"] = str(output_dir)
     run_kwargs["keep_temp_files"] = bool(keep_temp_files)
@@ -349,10 +352,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--bump1-amp", type=float, default=1.0)
-    parser.add_argument("--bump2-amp", type=float, default=3.5)
-    parser.add_argument("--size-scale", type=float, default=0.9)
-    parser.add_argument("--straighten-strength", type=float, default=0.3)
+    parser.add_argument("--bump1-amp", type=float, default=0.0)
+    parser.add_argument("--bump2-amp", type=float, default=0.0)
+    parser.add_argument("--size-scale", type=float, default=1.0)
+    parser.add_argument("--straighten-strength", type=float, default=0.0)
+    parser.add_argument(
+        "--taper-target-scale",
+        type=float,
+        help="Override taper_target_scale in the VEF config.",
+    )
     parser.add_argument("--z-voxels", type=int, required=True)
     parser.add_argument(
         "--output-dir",
@@ -414,6 +422,7 @@ def main(argv: list[str] | None = None) -> int:
         bump2_amp=args.bump2_amp,
         size_scale=args.size_scale,
         straighten_strength=args.straighten_strength,
+        taper_target_scale=args.taper_target_scale,
         repair_pitch=pitch,
         output_dir=output_dir,
         keep_temp_files=False,
