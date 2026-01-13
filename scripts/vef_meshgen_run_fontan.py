@@ -51,6 +51,7 @@ def update_run_kwargs(
     bump2_amp: float,
     size_scale: float,
     straighten_strength: float,
+    taper_length_mm: Optional[float],
     taper_target_scale: Optional[float],
     repair_pitch: float,
     output_dir: Path,
@@ -66,6 +67,8 @@ def update_run_kwargs(
     bumps[1]["amp"] = float(bump2_amp)
     run_kwargs["size_scale"] = float(size_scale)
     run_kwargs["straighten_strength"] = float(straighten_strength)
+    if taper_length_mm is not None:
+        run_kwargs["taper_length_mm"] = float(taper_length_mm)
     if taper_target_scale is not None:
         run_kwargs["taper_target_scale"] = float(taper_target_scale)
     run_kwargs["repair_pitch"] = float(repair_pitch)
@@ -357,6 +360,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--size-scale", type=float, default=1.0)
     parser.add_argument("--straighten-strength", type=float, default=0.0)
     parser.add_argument(
+        "--taper-length-mm",
+        type=float,
+        help="Override taper_length_mm in the VEF config.",
+    )
+    parser.add_argument(
         "--taper-target-scale",
         type=float,
         help="Override taper_target_scale in the VEF config.",
@@ -422,6 +430,7 @@ def main(argv: list[str] | None = None) -> int:
         bump2_amp=args.bump2_amp,
         size_scale=args.size_scale,
         straighten_strength=args.straighten_strength,
+        taper_length_mm=args.taper_length_mm,
         taper_target_scale=args.taper_target_scale,
         repair_pitch=pitch,
         output_dir=output_dir,
