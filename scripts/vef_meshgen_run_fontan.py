@@ -53,6 +53,7 @@ def update_run_kwargs(
     straighten_strength: float,
     taper_length_mm: Optional[float],
     taper_target_scale: Optional[float],
+    outlet_yz_minx: Optional[float],
     repair_pitch: float,
     output_dir: Path,
     keep_temp_files: bool,
@@ -71,6 +72,15 @@ def update_run_kwargs(
         run_kwargs["taper_length_mm"] = float(taper_length_mm)
     if taper_target_scale is not None:
         run_kwargs["taper_target_scale"] = float(taper_target_scale)
+    if outlet_yz_minx is not None:
+        outlet_plane_targets = run_kwargs.get("outlet_plane_targets")
+        if not isinstance(outlet_plane_targets, dict):
+            raise ValueError(
+                "Expected run_kwargs['outlet_plane_targets'] to be a dict to override YZ_minX."
+            )
+        if "YZ_minX" not in outlet_plane_targets:
+            raise ValueError("Expected run_kwargs['outlet_plane_targets'] to include 'YZ_minX'.")
+        outlet_plane_targets["YZ_minX"] = float(outlet_yz_minx)
     run_kwargs["repair_pitch"] = float(repair_pitch)
     run_kwargs["output_dir"] = str(output_dir)
     run_kwargs["keep_temp_files"] = bool(keep_temp_files)
@@ -369,6 +379,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         help="Override taper_target_scale in the VEF config.",
     )
+    parser.add_argument(
+        "--outlet-yz-minx",
+        type=float,
+        help="Override outlet_plane_targets['YZ_minX'] in the VEF config.",
+    )
     parser.add_argument("--z-voxels", type=int, required=True)
     parser.add_argument(
         "--output-dir",
@@ -432,6 +447,7 @@ def main(argv: list[str] | None = None) -> int:
         straighten_strength=args.straighten_strength,
         taper_length_mm=args.taper_length_mm,
         taper_target_scale=args.taper_target_scale,
+        outlet_yz_minx=args.outlet_yz_minx,
         repair_pitch=pitch,
         output_dir=output_dir,
         keep_temp_files=False,
