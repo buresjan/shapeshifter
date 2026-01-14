@@ -12,13 +12,22 @@ from pathlib import Path
 from time import time
 
 
-DEFAULT_CASES = "22:0.9,22:1.0,19:1.0,17:1.0,15:1.0"
+# DEFAULT_CASES = "22:0.9,22:1.0,19:1.0,17:1.0,15:1.0"
+DEFAULT_CASES = "13:1.0,11:1.0,9:1.0,7:1.0"
 DEFAULT_OUTPUT_DIR = Path("data") / "vef_meshgen"
 _UID_RE = re.compile(r"\(uid=([^)]+)\)")
 _GEOM_UID_RE = re.compile(r"geom_vef_(.+)\.txt$")
 _SLURM_RE = re.compile(r"\[slurm\] submitted job (\S+)")
 _RUN_DIR_RE = re.compile(r"\[slurm\] submitted job \S+ \(run dir: (.+)\)")
 _RUN_DIR_FALLBACK_RE = re.compile(r"\[run\] Solver artifacts directory: (.+)")
+_STL_EXTENTS_RE = re.compile(
+    r"\[geom\] stl_extents_mm: ([^ ]+) ([^ ]+) ([^ ]+)"
+)
+_VOXEL_SHAPE_RE = re.compile(r"\[geom\] voxel_shape: (\d+) (\d+) (\d+)")
+_VOXEL_PITCH_RE = re.compile(r"\[geom\] voxel_pitch_mm: ([^ ]+)")
+_VOXEL_EXTENTS_RE = re.compile(
+    r"\[geom\] voxel_extents_mm: ([^ ]+) ([^ ]+) ([^ ]+)"
+)
 
 
 def _parse_cases(raw: str) -> list[tuple[float, float]]:
@@ -52,6 +61,10 @@ def _has_taper_override(args: list[str]) -> bool:
         if token.startswith("--outlet-yz-minx="):
             return True
     return False
+
+
+def _has_geometry_only(args: list[str]) -> bool:
+    return any(token == "--geometry-only" for token in args)
 
 
 def _infer_output_dir(passthrough: list[str], repo_root: Path) -> Path:
@@ -90,6 +103,42 @@ def _parse_run_output(output: str) -> dict[str, str | None]:
             if match:
                 run_dir = match.group(1)
     return {"uid": uid, "job_id": job_id, "run_dir": run_dir}
+
+
+def _parse_geom_output(output: str) -> dict[str, object | None]:
+    stl_extents: list[float] | None = None
+    voxel_shape: list[int] | None = None
+    voxel_pitch: float | None = None
+    voxel_extents: list[float] | None = None
+
+    for line in output.splitlines():
+        if stl_extents is None:
+            match = _STL_EXTENTS_RE.search(line)
+            if match:
+                stl_extents = [float(match.group(i)) for i in range(1, 4)]
+                continue
+        if voxel_shape is None:
+            match = _VOXEL_SHAPE_RE.search(line)
+            if match:
+                voxel_shape = [int(match.group(i)) for i in range(1, 4)]
+                continue
+        if voxel_pitch is None:
+            match = _VOXEL_PITCH_RE.search(line)
+            if match:
+                voxel_pitch = float(match.group(1))
+                continue
+        if voxel_extents is None:
+            match = _VOXEL_EXTENTS_RE.search(line)
+            if match:
+                voxel_extents = [float(match.group(i)) for i in range(1, 4)]
+                continue
+
+    return {
+        "stl_extents_mm": stl_extents,
+        "voxel_shape": voxel_shape,
+        "voxel_pitch_mm": voxel_pitch,
+        "voxel_extents_mm": voxel_extents,
+    }
 
 
 def _infer_uid_from_output_dir(output_dir: Path, before: set[Path]) -> str | None:
@@ -180,6 +229,7 @@ def _parse_args(argv: list[str] | None = None) -> tuple[list[tuple[float, float]
 
 def main(argv: list[str] | None = None) -> int:
     cases, passthrough = _parse_args(argv)
+    geometry_only = _has_geometry_only(passthrough)
 
     repo_root = Path(__file__).resolve().parents[1]
     output_dir = _infer_output_dir(passthrough, repo_root)
@@ -238,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
 
         combined_output = "\n".join(filter(None, [proc.stdout, proc.stderr]))
         parsed = _parse_run_output(combined_output)
+        geom_meta = _parse_geom_output(combined_output)
         uid = parsed["uid"] or _infer_uid_from_output_dir(output_dir, pre_geom)
         job_id = parsed["job_id"]
         run_dir = parsed["run_dir"] or _infer_run_dir(run_root, pre_run_dirs, start_time)
@@ -252,6 +303,9 @@ def main(argv: list[str] | None = None) -> int:
             "run_dir": run_dir,
             "returncode": proc.returncode,
         }
+        for key, value in geom_meta.items():
+            if value is not None:
+                case_record[key] = value
         sweep_meta["cases"].append(case_record)
         sweep_meta["updated_at"] = datetime.now().isoformat(timespec="seconds")
         index_path.write_text(json.dumps(sweep_meta, indent=2), encoding="ascii")
@@ -263,7 +317,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return proc.returncode
 
-    print("[sweep] all runs submitted")
+    if geometry_only:
+        print("[sweep] all geometry runs complete")
+    else:
+        print("[sweep] all runs submitted")
     return 0
 
 

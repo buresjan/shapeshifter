@@ -86,7 +86,7 @@ def update_run_kwargs(
     run_kwargs["keep_temp_files"] = bool(keep_temp_files)
 
 
-def voxelize_with_pitch(stl_path: Path, pitch: float):
+def load_mesh(stl_path: Path):
     from meshgen import voxels as mg_voxels
 
     mesh = mg_voxels.trm.load(str(stl_path))
@@ -99,6 +99,13 @@ def voxelize_with_pitch(stl_path: Path, pitch: float):
         if hasattr(mesh, "is_watertight") and not mesh.is_watertight:
             raise RuntimeError("STL is not watertight after repair; voxelization may be invalid.")
 
+    return mesh
+
+
+def voxelize_with_pitch(stl_path: Path, pitch: float, *, mesh=None):
+    from meshgen import voxels as mg_voxels
+
+    mesh = load_mesh(stl_path) if mesh is None else mesh
     return mg_voxels.voxelize_with_splitting(
         mesh,
         pitch,
@@ -106,6 +113,18 @@ def voxelize_with_pitch(stl_path: Path, pitch: float):
         num_processes=1,
         target_bounds=mesh.bounds,
     )
+
+
+def _mesh_bounds(mesh) -> tuple[list[float], list[float], list[float]]:
+    bounds = mesh.bounds
+    mins = [float(value) for value in bounds[0]]
+    maxs = [float(value) for value in bounds[1]]
+    extents = [max_v - min_v for min_v, max_v in zip(mins, maxs)]
+    return mins, maxs, extents
+
+
+def _format_vector(values: list[float]) -> str:
+    return " ".join(f"{value:.6f}" for value in values)
 
 
 def save_labeled_triplet(labeled_mesh, output_dir: Path, base_name: str) -> None:
@@ -418,6 +437,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Seconds between job status checks (only with --wait)",
     )
     parser.add_argument(
+        "--geometry-only",
+        action="store_true",
+        help="Generate STL/voxel geometry only; skip staging and Slurm submission.",
+    )
+    parser.add_argument(
         "--wait",
         action="store_true",
         help="Wait for the Slurm job to finish and parse the scalar output",
@@ -470,8 +494,19 @@ def main(argv: list[str] | None = None) -> int:
     print(f"VEF STL: {final_path} (uid={uid})")
     print(f"Voxel pitch: {pitch:.6f}")
 
-    voxels = voxelize_with_pitch(final_path, pitch)
+    mesh = load_mesh(final_path)
+    bounds_min, bounds_max, stl_extents = _mesh_bounds(mesh)
+    print(f"[geom] stl_bounds_min_mm: {_format_vector(bounds_min)}")
+    print(f"[geom] stl_bounds_max_mm: {_format_vector(bounds_max)}")
+    print(f"[geom] stl_extents_mm: {_format_vector(stl_extents)}")
+
+    voxels = voxelize_with_pitch(final_path, pitch, mesh=mesh)
     print(f"Voxel grid shape: {voxels.shape}")
+    voxel_shape = [int(value) for value in voxels.shape]
+    voxel_extents = [value * pitch for value in voxel_shape]
+    print(f"[geom] voxel_shape: {' '.join(str(value) for value in voxel_shape)}")
+    print(f"[geom] voxel_pitch_mm: {pitch:.6f}")
+    print(f"[geom] voxel_extents_mm: {_format_vector(voxel_extents)}")
 
     from meshgen.voxels import prepare_voxel_mesh_txt
 
@@ -493,6 +528,10 @@ def main(argv: list[str] | None = None) -> int:
         if not path.exists():
             print(f"error: expected {label} file '{path}' was not created", file=sys.stderr)
             return 1
+
+    if args.geometry_only:
+        print("[run] geometry-only mode; skipping solver submission")
+        return 0
 
     run_dir = prepare_run_directory(project_root, case_name)
     print(f"[run] Solver artifacts directory: {run_dir}")
