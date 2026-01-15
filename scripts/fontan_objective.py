@@ -400,7 +400,16 @@ def objective(
         data_root.mkdir(parents=True, exist_ok=True)
         stage_geometry(files, data_root)
 
-        scalar_value, time_value, val_path, slurm_state, used_fallback = run_fontan_simulation(
+        (
+            scalar_value,
+            time_value,
+            val_path,
+            ploss_value,
+            ploss_time,
+            ploss_path,
+            slurm_state,
+            used_fallback,
+        ) = run_fontan_simulation(
             case_name,
             resolution=SIM_RESOLUTION,
             run_dir=run_dir,
@@ -454,15 +463,22 @@ def objective(
             "case_name": case_name,
             "time_value": time_value,
             "scalar_value": scalar_value,
+            "ploss_time_value": ploss_time,
+            "ploss_value": ploss_value,
             "objective_value": objective_value,
             "val_path": str(val_path),
+            "ploss_path": str(ploss_path) if ploss_path is not None else None,
             "vef_stl": str(final_path),
             "slurm_state": slurm_state,
         },
     )
     log_path = _log_eval(algorithm_label, eval_id, params, objective_value, run_dir)
+    ploss_note = ""
+    if ploss_value is not None and math.isfinite(ploss_value):
+        ploss_note = f" ploss={float(ploss_value):.6g}"
     print(
-        f"[obj] eval {eval_id:04d} value={objective_value:.6g} x={tuple(map(float, params))} "
+        f"[obj] eval {eval_id:04d} value={objective_value:.6g}{ploss_note} "
+        f"x={tuple(map(float, params))} "
         f"(log={log_path})",
         flush=True,
     )

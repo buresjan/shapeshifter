@@ -205,6 +205,38 @@ class LoggingNelderMeadOptimizer(NelderMeadOptimizer):
             entries.append(f"v{idx}: f={float(val):.6g} [{coords_fmt}]")
         print(f"[simplex] iter={iteration:03d} " + "; ".join(entries), flush=True)
 
+    def _shrink(
+        self,
+        simplex: list[np.ndarray],
+        fvals: list[float],
+        executor,
+        manual_count: bool,
+        evaluate,
+        eval_map,
+    ) -> None:
+        new_points = [simplex[0]]
+        for p in simplex[1:]:
+            new_points.append(simplex[0] + self.sigma * (p - simplex[0]))
+        _ep_params = inspect.signature(self._eval_points).parameters
+        supports_map_kw = "map_input" in _ep_params
+        if supports_map_kw:
+            new_f = self._eval_points(
+                evaluate,
+                new_points[1:],
+                executor,
+                manual_count,
+                map_input=eval_map,
+            )
+        else:
+            new_f = self._eval_points(
+                evaluate,
+                new_points[1:],
+                executor,
+                manual_count,
+            )
+        simplex[:] = new_points
+        fvals[:] = [fvals[0]] + list(new_f)
+
     def optimize(
         self,
         objective,
@@ -523,7 +555,7 @@ class LoggingNelderMeadOptimizer(NelderMeadOptimizer):
                                     fvals,
                                     executor,
                                     manual_count,
-                                    penalised_raw,
+                                    evaluate,
                                     eval_map,
                                 )
                         else:
@@ -552,7 +584,7 @@ class LoggingNelderMeadOptimizer(NelderMeadOptimizer):
                                     fvals,
                                     executor,
                                     manual_count,
-                                    penalised_raw,
+                                    evaluate,
                                     eval_map,
                                 )
         except nm_impl.EvaluationBudgetExceeded as exc:

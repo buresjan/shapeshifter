@@ -44,15 +44,24 @@ def run_fontan_simulation(
     default_on_failure: float = 1.0e9,
     avg_window: Optional[float] = 1.0,
     verbose: bool = False,
-) -> tuple[float, float | None, Path | None, Optional[str], bool]:
-    """Run sim_fontan_* via Slurm and return (value, time_end, val_path, state, used_fallback)."""
+) -> tuple[
+    float,
+    float | None,
+    Path | None,
+    float | None,
+    float | None,
+    Path | None,
+    Optional[str],
+    bool,
+]:
+    """Run sim_fontan_* via Slurm and return (value, time_end, val_path, ploss_value, ploss_time, ploss_path, state, used_fallback)."""
     if not binary_path.is_file():
         if verbose:
             print(
                 f"[fontan] solver binary not found at {binary_path}; "
                 f"returning fallback {default_on_failure}",
             )
-        return float(default_on_failure), None, None, None, True
+        return float(default_on_failure), None, None, None, None, None, None, True
 
     run_dir.mkdir(parents=True, exist_ok=True)
     data_root.mkdir(parents=True, exist_ok=True)
@@ -75,7 +84,7 @@ def run_fontan_simulation(
     except subprocess.SubprocessError as exc:
         if verbose:
             print(f"[fontan] failed to submit job: {exc}; returning fallback value")
-        return float(default_on_failure), None, None, None, True
+        return float(default_on_failure), None, None, None, None, None, None, True
 
     if verbose:
         print(f"[fontan] submitted job {job_id} (run dir: {run_dir})")
@@ -87,16 +96,39 @@ def run_fontan_simulation(
         avg_window=avg_window,
         verbose=verbose,
     )
+    ploss_result = _read_result(
+        data_root,
+        filename,
+        avg_window=avg_window,
+        verbose=verbose,
+        prefix="val_ploss",
+        subdir="ploss",
+        label="ploss",
+    )
     if result is not None:
         value, time_end, val_path = result
+        ploss_value: float | None = None
+        ploss_time: float | None = None
+        ploss_path: Path | None = None
+        if ploss_result is not None:
+            ploss_value, ploss_time, ploss_path = ploss_result
         if verbose:
             print(f"[fontan] returning value {value} from state {state}")
-        return float(value), time_end, val_path, state, False
+        return (
+            float(value),
+            time_end,
+            val_path,
+            ploss_value,
+            ploss_time,
+            ploss_path,
+            state,
+            False,
+        )
 
     if verbose:
         msg = f"[fontan] result missing after job state={state}; using fallback"
         print(msg)
-    return float(default_on_failure), None, None, state, True
+    return float(default_on_failure), None, None, None, None, None, state, True
 
 
 def _write_sbatch(
@@ -135,6 +167,8 @@ def _write_sbatch(
     tmp_dir_quoted = shlex.quote(str((data_root / "tmp").resolve()))
     result_basename = f"val_{Path(filename).name}"
     result_basename_quoted = shlex.quote(result_basename)
+    ploss_basename = f"val_ploss{Path(filename).name}"
+    ploss_basename_quoted = shlex.quote(ploss_basename)
     resolution_literal = str(resolution)
 
     body = (
@@ -146,12 +180,14 @@ INPUT_FILENAME={filename_quoted}
 RESOLUTION={resolution_literal}
 TMP_DIR={tmp_dir_quoted}
 RESULT_BASENAME={result_basename_quoted}
+PLOSS_BASENAME={ploss_basename_quoted}
 DATA_ROOT={data_root_quoted}
 
 export TNL_LBM_DATA_ROOT="$DATA_ROOT"
 
-mkdir -p "$TMP_DIR"
-rm -f "$TMP_DIR/$RESULT_BASENAME"
+PLOSS_DIR="$TMP_DIR/ploss"
+mkdir -p "$TMP_DIR" "$PLOSS_DIR"
+rm -f "$TMP_DIR/$RESULT_BASENAME" "$PLOSS_DIR/$PLOSS_BASENAME"
 
 if [ ! -x "$SOLVER_BINARY" ]; then
     echo "Solver binary $SOLVER_BINARY is missing or not executable." >&2
@@ -254,11 +290,17 @@ def _read_result(
     *,
     avg_window: Optional[float],
     verbose: bool,
+    prefix: str = "val_",
+    subdir: Optional[str] = None,
+    label: str = "result",
 ) -> Optional[tuple[float, float | None, Path]]:
-    result_path = data_root / "tmp" / f"val_{Path(filename).name}"
+    result_root = data_root / "tmp"
+    if subdir:
+        result_root = result_root / subdir
+    result_path = result_root / f"{prefix}{Path(filename).name}"
     if not result_path.is_file():
         if verbose:
-            print(f"[fontan] result file {result_path} not found")
+            print(f"[fontan] {label} file {result_path} not found")
         return None
 
     try:
@@ -292,7 +334,7 @@ def _read_result(
 
     if not values:
         if verbose:
-            print(f"[fontan] could not parse any numeric value from {result_path}")
+            print(f"[fontan] could not parse any numeric value from {label} file {result_path}")
         return None
 
     time_end = times[-1] if times else None
@@ -407,7 +449,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    value, _, _, _, _ = run_fontan_simulation(
+    value, *_ = run_fontan_simulation(
         args.filename,
         resolution=args.resolution,
         run_dir=args.run_dir,
