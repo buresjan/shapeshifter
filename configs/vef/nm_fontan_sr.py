@@ -23,6 +23,7 @@ CONFIG = {
         "memoize": True,
         "parallel_poll_points": True,
         "log_simplex": True,
+        "step": [0.1, 0.1, -0.1, 0.1, -0.1],
         "no_improve_thr": 1.0e-3,
         "no_improv_break": 10,
         "penalty": 1.0e9,

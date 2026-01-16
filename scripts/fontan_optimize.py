@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import math
+import multiprocessing
 import os
 import threading
 from functools import partial
@@ -23,6 +24,8 @@ from fontan_config import load_config
 
 _CONFIG_ENV_VAR = "FONTAN_CONFIG_PATH"
 _ALGO_ENV_VAR = "FONTAN_ALGORITHM_LABEL"
+_EVAL_LOCK = threading.Lock()
+_EVAL_COUNTERS: Dict[str, int] = {}
 
 
 def _parse_args() -> argparse.Namespace:
@@ -176,6 +179,65 @@ def _cache_key(x: np.ndarray, round_digits: int | None) -> Tuple[float, ...]:
     if round_digits is None:
         return tuple(float(value) for value in x)
     return tuple(float(value) for value in np.round(x, round_digits))
+
+
+def _next_eval_id(algorithm_label: str) -> int:
+    with _EVAL_LOCK:
+        current = _EVAL_COUNTERS.get(algorithm_label, 0) + 1
+        _EVAL_COUNTERS[algorithm_label] = current
+        return current
+
+
+def _objective_worker(
+    arr: np.ndarray,
+    eval_id: int,
+    config_path: str,
+    algorithm_label: str,
+    queue: multiprocessing.Queue,
+) -> None:
+    try:
+        cfg = _load_and_configure(Path(config_path), algorithm_label)
+        value = float(
+            fontan_objective.objective(
+                np.asarray(arr, dtype=float),
+                algorithm=cfg["algorithm_label"],
+                eval_id=eval_id,
+            )
+        )
+        queue.put(("ok", value))
+    except Exception as exc:
+        queue.put(("err", str(exc)))
+
+
+def _objective_subprocess(
+    x: np.ndarray,
+    *,
+    eval_id: int,
+    config_path: Path,
+    algorithm_label: str,
+) -> float:
+    ctx = (
+        multiprocessing.get_context("fork")
+        if "fork" in multiprocessing.get_all_start_methods()
+        else multiprocessing.get_context("spawn")
+    )
+    queue: multiprocessing.Queue = ctx.Queue()
+
+    proc = ctx.Process(
+        target=_objective_worker,
+        args=(np.asarray(x, dtype=float), eval_id, str(config_path), algorithm_label, queue),
+    )
+    proc.start()
+    proc.join()
+
+    if queue.empty():
+        raise RuntimeError(
+            f"Objective subprocess did not return a result (exitcode={proc.exitcode})."
+        )
+    status, payload = queue.get()
+    if status != "ok":
+        raise RuntimeError(f"Objective subprocess failed: {payload}")
+    return float(payload)
 
 
 class LoggingNelderMeadOptimizer(NelderMeadOptimizer):
@@ -621,7 +683,13 @@ def _build_optimizer(optimizer_cfg: dict) -> tuple[object, bool, bool, bool]:
             nm_kwargs["memoize"] = bool(optimizer_cfg.get("memoize"))
         if optimizer_cfg.get("parallel_poll_points") is not None:
             nm_kwargs["parallel_poll_points"] = bool(optimizer_cfg.get("parallel_poll_points"))
-        for key in ("step", "alpha", "gamma", "beta", "delta", "sigma"):
+        step = optimizer_cfg.get("step")
+        if step is not None:
+            if isinstance(step, (list, tuple, np.ndarray)):
+                nm_kwargs["step"] = [float(value) for value in step]
+            else:
+                nm_kwargs["step"] = float(step)
+        for key in ("alpha", "gamma", "beta", "delta", "sigma"):
             if optimizer_cfg.get(key) is not None:
                 nm_kwargs[key] = float(optimizer_cfg.get(key))
         for key in ("no_improve_thr", "penalty"):
@@ -678,6 +746,7 @@ def main() -> int:
                 cache[key] = float(entry["value"])
 
         cache_lock = threading.Lock()
+        use_subprocess = bool(cfg["optimizer"].get("subprocess", True))
 
         def _memoized_objective(arr: np.ndarray) -> float:
             key = _cache_key(np.asarray(arr, dtype=float), cache_round)
@@ -690,12 +759,22 @@ def main() -> int:
                 )
                 return float(cached)
 
-            value = float(
-                fontan_objective.objective(
+            eval_id = _next_eval_id(cfg["algorithm_label"])
+            if use_subprocess:
+                value = _objective_subprocess(
                     np.asarray(arr, dtype=float),
-                    algorithm=cfg["algorithm_label"],
+                    eval_id=eval_id,
+                    config_path=config_path,
+                    algorithm_label=cfg["algorithm_label"],
                 )
-            )
+            else:
+                value = float(
+                    fontan_objective.objective(
+                        np.asarray(arr, dtype=float),
+                        algorithm=cfg["algorithm_label"],
+                        eval_id=eval_id,
+                    )
+                )
             if not math.isfinite(value):
                 raise RuntimeError(f"Objective returned non-finite value {value} for x={key}")
             with cache_lock:
