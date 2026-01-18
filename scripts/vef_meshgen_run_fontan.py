@@ -29,6 +29,7 @@ FAILED_STATES = {
     "STOPPED",
 }
 DEFAULT_WALLTIME = "20:00:00"
+DEFAULT_OUTPUT_DIR = Path("data") / "vef_meshgen"
 
 
 def load_sample_config(vef_root: Path) -> dict:
@@ -41,6 +42,16 @@ def load_sample_config(vef_root: Path) -> dict:
         raise ValueError("VEF sample config must be a JSON object.")
     if "run_kwargs" not in config or not isinstance(config["run_kwargs"], dict):
         raise ValueError("VEF sample config must contain a run_kwargs object.")
+    return config
+
+
+def load_config_file(config_path: Path) -> dict:
+    if not config_path.exists():
+        raise FileNotFoundError(f"VEF config not found: {config_path}")
+    with config_path.open("r", encoding="utf-8") as handle:
+        config = json.load(handle)
+    if not isinstance(config, dict):
+        raise ValueError("VEF config must be a JSON object.")
     return config
 
 
@@ -389,6 +400,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--size-scale", type=float, default=1.0)
     parser.add_argument("--straighten-strength", type=float, default=0.0)
     parser.add_argument(
+        "--config",
+        type=Path,
+        help="Path to a VEF config JSON (uses config values instead of sample defaults).",
+    )
+    parser.add_argument(
         "--taper-length-mm",
         type=float,
         help="Override taper_length_mm in the VEF config.",
@@ -407,7 +423,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("data") / "vef_meshgen",
+        default=None,
+        help="Override output_dir from the VEF config (defaults to data/vef_meshgen without --config).",
     )
     parser.add_argument(
         "--binary",
@@ -458,38 +475,68 @@ def main(argv: list[str] | None = None) -> int:
 
     project_root = Path(__file__).resolve().parents[1]
     vef_root = project_root / "submodules" / "meshgen" / "vascular_encoding_framework"
-    output_dir = (project_root / args.output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     pitch = Z_EXTENT / float(args.z_voxels)
-    config = load_sample_config(vef_root)
-    update_run_kwargs(
-        config["run_kwargs"],
-        bump1_amp=args.bump1_amp,
-        bump2_amp=args.bump2_amp,
-        size_scale=args.size_scale,
-        straighten_strength=args.straighten_strength,
-        taper_length_mm=args.taper_length_mm,
-        taper_target_scale=args.taper_target_scale,
-        outlet_yz_minx=args.outlet_yz_minx,
-        repair_pitch=pitch,
-        output_dir=output_dir,
-        keep_temp_files=False,
-    )
-
     sys.path.insert(0, str(vef_root))
     from pipeline.vef_pipeline import run_from_config
 
-    try:
-        final_path, uid = run_from_config(config, base_dir=vef_root)
-    except Exception as exc:
-        print(f"error: VEF pipeline failed: {exc}", file=sys.stderr)
-        return 1
+    overrides = {"repair_pitch": pitch}
+    if args.output_dir is not None:
+        output_dir_override = (project_root / args.output_dir).resolve()
+        output_dir_override.mkdir(parents=True, exist_ok=True)
+        overrides["output_dir"] = output_dir_override
+
+    if args.config is not None:
+        config_path = args.config
+        if not config_path.is_absolute():
+            config_path = (project_root / config_path).resolve()
+        try:
+            config = load_config_file(config_path)
+        except (OSError, ValueError) as exc:
+            print(f"error: failed to load config: {exc}", file=sys.stderr)
+            return 1
+        try:
+            final_path, uid = run_from_config(
+                config,
+                config_path=config_path,
+                overrides=overrides,
+            )
+        except Exception as exc:
+            print(f"error: VEF pipeline failed: {exc}", file=sys.stderr)
+            return 1
+    else:
+        output_dir = (
+            (project_root / args.output_dir).resolve()
+            if args.output_dir is not None
+            else (project_root / DEFAULT_OUTPUT_DIR).resolve()
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        config = load_sample_config(vef_root)
+        update_run_kwargs(
+            config["run_kwargs"],
+            bump1_amp=args.bump1_amp,
+            bump2_amp=args.bump2_amp,
+            size_scale=args.size_scale,
+            straighten_strength=args.straighten_strength,
+            taper_length_mm=args.taper_length_mm,
+            taper_target_scale=args.taper_target_scale,
+            outlet_yz_minx=args.outlet_yz_minx,
+            repair_pitch=pitch,
+            output_dir=output_dir,
+            keep_temp_files=False,
+        )
+        try:
+            final_path, uid = run_from_config(config, base_dir=vef_root)
+        except Exception as exc:
+            print(f"error: VEF pipeline failed: {exc}", file=sys.stderr)
+            return 1
 
     final_path = Path(final_path)
     if not final_path.exists():
         print(f"error: VEF pipeline did not produce STL: {final_path}", file=sys.stderr)
         return 1
+
+    output_dir = final_path.parent.resolve()
 
     print(f"VEF STL: {final_path} (uid={uid})")
     print(f"Voxel pitch: {pitch:.6f}")
