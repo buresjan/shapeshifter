@@ -40,7 +40,7 @@
     "taper_end": "YZ_minX",
     "taper_length_mm": 0.1,
     "taper_target_scale": 1.0,
-    "taper_sections": 1,
+    "taper_sections": 2,
     "outlet_plane_targets": {
       "YZ_minX": -198.974893,
       "XZ_minY": -104.477898,
