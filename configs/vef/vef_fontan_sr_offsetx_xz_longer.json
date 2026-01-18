@@ -1,0 +1,67 @@
+{
+  "_comment": "Singular VEF fontan run (default geometry, offset_x -2.7, taper 3mm).",
+  "base_dir": "../..",
+  "run_kwargs": {
+    "tau0": 0.0,
+    "theta0": 3.7,
+    "bump_amp": 0.0,
+    "sigma_t": 0.05,
+    "sigma_theta": 0.35,
+    "bumps": [
+      {
+        "tau0": 0.0,
+        "theta0": 3.7,
+        "amp": 0.0,
+        "sigma_t": 0.05,
+        "sigma_theta": 0.35
+      },
+      {
+        "tau0": 0.0,
+        "theta0": 0.7,
+        "amp": 0.0,
+        "sigma_t": 0.05,
+        "sigma_theta": 0.55
+      }
+    ],
+    "size_scale": 1.0,
+    "straighten_strength": 0.0,
+    "straighten_exponent": 0.5,
+    "straighten_preserve": 3,
+    "offset_xy": [
+      -2.7,
+      -1.25
+    ],
+    "rho_min": 0.001,
+    "radius_fit_laplacian": 0.001,
+    "rim_tol": 0.001,
+    "deform_r1": 5.0,
+    "deform_r2": 10.0,
+    "clip_offset": 1.0,
+    "taper_end": "XZ_minY",
+    "taper_length_mm": 3.0,
+    "taper_target_scale": 0.9,
+    "taper_sections": 24,
+    "outlet_plane_targets": {
+      "YZ_minX": -198.874893,
+      "XZ_minY": -107.477898,
+      "XY_minZ": 0.0,
+      "XY_maxZ": 90.779533
+    },
+    "repair_pitch": 0.20,
+    "repair_closing_radius": 1,
+    "repair_target_voxels_min_dim": 80,
+    "repair_merge_digits": 6,
+    "repair_keep_area_ratio": 0.01,
+    "repair_plane_range_tol": null,
+    "repair_verbose": true,
+    "output_dir": "data/vef_fontan_opt/vef_outputs",
+    "temp_dir": null,
+    "keep_temp_files": false,
+    "combined_output": null,
+    "tapered_output": null,
+    "encoding_path": "submodules/meshgen/vascular_encoding_framework/pipeline/sim_conduit/Encoding/encoding.vtm",
+    "vcs_map_path": "submodules/meshgen/vascular_encoding_framework/pipeline/sim_conduit/Encoding/vcs_map.vtp",
+    "partner_stl": "submodules/meshgen/vascular_encoding_framework/pipeline/not_conduit_extruded_canon.stl",
+    "partner_orig_rim": "submodules/meshgen/vascular_encoding_framework/pipeline/basic_loop_canon.vtp"
+  }
+}
