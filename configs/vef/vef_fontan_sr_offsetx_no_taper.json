@@ -38,11 +38,11 @@
     "deform_r2": 10.0,
     "clip_offset": 1.0,
     "taper_end": "YZ_minX",
-    "taper_length_mm": 0.0,
+    "taper_length_mm": 0.1,
     "taper_target_scale": 1.0,
-    "taper_sections": 24,
+    "taper_sections": 1,
     "outlet_plane_targets": {
-      "YZ_minX": -198.874893,
+      "YZ_minX": -198.974893,
       "XZ_minY": -104.477898,
       "XY_minZ": 0.0,
       "XY_maxZ": 90.779533
