@@ -603,7 +603,7 @@ def main(argv: list[str] | None = None) -> int:
     stage_geometry(files, data_root)
 
     default_binary = (
-        project_root / "submodules" / "tnl-lbm" / "build" / "sim_NSE" / "sim_fontan"
+        project_root / "submodules" / "tnl-lbm" / "build" / "sim_NSE" / "sim_fontan_sr"
     )
     binary = (args.binary or default_binary).resolve()
     if not binary.is_file():
