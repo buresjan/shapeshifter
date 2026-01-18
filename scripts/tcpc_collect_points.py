@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import shlex
 import subprocess
 from pathlib import Path
@@ -40,6 +41,28 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--partition", help="Slurm partition")
     parser.add_argument("--output", help="Slurm output path")
     parser.add_argument("--open-mode", help="Slurm open mode")
+    parser.add_argument("--solver-time", help="Solver job Slurm walltime (TCPC_SLURM_WALLTIME)")
+    parser.add_argument(
+        "--solver-cpus", type=int, help="Solver job Slurm CPUs per task (TCPC_SLURM_CPUS)"
+    )
+    parser.add_argument(
+        "--solver-gpus", type=int, help="Solver job Slurm GPU count (TCPC_SLURM_GPUS)"
+    )
+    parser.add_argument("--solver-mem", help="Solver job Slurm memory (TCPC_SLURM_MEM)")
+    parser.add_argument(
+        "--solver-partition",
+        help="Solver job Slurm partition (TCPC_SLURM_PARTITION)",
+    )
+    parser.add_argument(
+        "--start-idx",
+        type=int,
+        help="1-based start index (inclusive) for selecting points from the CSV",
+    )
+    parser.add_argument(
+        "--stop-idx",
+        type=int,
+        help="1-based stop index (inclusive) for selecting points from the CSV",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print commands only")
     return parser.parse_args()
 
@@ -111,6 +134,31 @@ def main() -> int:
     else:
         point_iter = _iter_points_from_base_step(args.base, args.step)
 
+    if args.start_idx is not None or args.stop_idx is not None:
+        points = list(point_iter)
+        total = len(points)
+        start_idx = args.start_idx or 1
+        stop_idx = args.stop_idx or total
+        if start_idx < 1 or stop_idx < 1:
+            raise ValueError("START/STOP indices must be >= 1")
+        if stop_idx < start_idx:
+            raise ValueError("STOP index must be >= START index")
+        if start_idx > total or stop_idx > total:
+            raise ValueError(f"START/STOP indices out of range (1..{total})")
+        point_iter = points[start_idx - 1 : stop_idx]
+
+    solver_env = {}
+    if args.solver_time is not None:
+        solver_env["TCPC_SLURM_WALLTIME"] = str(args.solver_time)
+    if args.solver_cpus is not None:
+        solver_env["TCPC_SLURM_CPUS"] = str(args.solver_cpus)
+    if args.solver_gpus is not None:
+        solver_env["TCPC_SLURM_GPUS"] = str(args.solver_gpus)
+    if args.solver_mem is not None:
+        solver_env["TCPC_SLURM_MEM"] = str(args.solver_mem)
+    if args.solver_partition is not None:
+        solver_env["TCPC_SLURM_PARTITION"] = str(args.solver_partition)
+
     for row in point_iter:
         direction = row.get("direction") or row.get("Direction")
         sign = row.get("sign") or row.get("Sign")
@@ -158,15 +206,30 @@ def main() -> int:
             if args.dry_run:
                 print("[local]", " ".join(shlex.quote(token) for token in cmd))
                 continue
-            result = subprocess.run(cmd, cwd=PROJECT_ROOT, check=False)
+            if solver_env:
+                env = os.environ.copy()
+                env.update(solver_env)
+            else:
+                env = None
+            result = subprocess.run(cmd, cwd=PROJECT_ROOT, check=False, env=env)
             if result.returncode != 0:
                 raise SystemExit(result.returncode)
             continue
 
-        wrap_cmd = "cd {} && {}".format(
-            shlex.quote(str(PROJECT_ROOT)),
-            " ".join(shlex.quote(token) for token in cmd),
+        env_prefix = " ".join(
+            f"{key}={shlex.quote(value)}" for key, value in solver_env.items()
         )
+        if env_prefix:
+            wrap_cmd = "cd {} && {} {}".format(
+                shlex.quote(str(PROJECT_ROOT)),
+                env_prefix,
+                " ".join(shlex.quote(token) for token in cmd),
+            )
+        else:
+            wrap_cmd = "cd {} && {}".format(
+                shlex.quote(str(PROJECT_ROOT)),
+                " ".join(shlex.quote(token) for token in cmd),
+            )
 
         sbatch_cmd = [
             "sbatch",

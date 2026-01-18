@@ -113,6 +113,23 @@ python3 scripts/tcpc_collect_points.py \
   --points-csv configs/tcpc/points/extra_points_round1.csv
 ```
 
+Override wrapper vs solver resources (wrapper stays GPU-free; solver gets GPU):
+```
+python3 scripts/tcpc_collect_points.py \
+  --config configs/tcpc/nm_tcpc.py \
+  --points-csv configs/tcpc/points/extra_points_round1.csv \
+  --cpus 4 --mem 2G --time 24:00:00 \
+  --solver-cpus 4 --solver-gpus 1 --solver-mem 16G --solver-time 24:00:00
+```
+
+Submit a subset of points by 1-based index:
+```
+python3 scripts/tcpc_collect_points.py \
+  --config configs/tcpc/nm_tcpc.py \
+  --points-csv configs/tcpc/points/extra_points_round1.csv \
+  --start-idx 1 --stop-idx 5
+```
+
 Run locally:
 ```
 python3 scripts/tcpc_collect_points.py \
