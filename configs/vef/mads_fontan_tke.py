@@ -1,7 +1,7 @@
 CONFIG = {
-    "label": "mads_fontan_tke",
-    "algorithm_label": "mads_fontan_tke",
-    "max_evals": 40,
+    "label": "mads_fontan_tke_2",
+    "algorithm_label": "mads_fontan_tke_2",
+    "max_evals": 100,
     "geometry_penalty": 1.0e9,
     "space": {
         "names": (
