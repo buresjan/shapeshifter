@@ -1,0 +1,11 @@
+direction,sign,offset,lower_angle,upper_angle,lower_flare,upper_flare,case_label
+sr_tr05_new,1,-0.00235224,-0.28876,7.65250,0.00208729,0.00129884,nm_sr_tr05_new_4
+sr_tr05_new,2,-0.00235224,-3.28876,4.65250,0.00183729,0.00129884,nm_sr_tr05_new_2
+sr_tr05_new,3,-0.00235224,-3.28876,7.65250,0.00208729,0.00154884,nm_sr_tr05_new_5
+sr_tr05_new,4,-0.00235224,-3.28876,6.15250,0.00183729,0.00142384,triple_offsetp_lower_anglem_lower_flarem
+sr_tr05_new,5,-0.00435224,-1.78876,6.15250,0.00208729,0.00154884,triple_offsetm_lower_flarep_upper_flarep
+sr_tr05_new,6,-0.00435224,-0.28876,6.15250,0.00196229,0.00154884,triple_offsetm_lower_anglep_upper_flarep
+sr_tr05_new,7,-0.00335224,-0.28876,7.65250,0.00183729,0.00142384,triple_lower_anglep_upper_anglep_lower_flarem
+sr_tr05_new,8,-0.00435224,-1.78876,7.65250,0.00196229,0.00154884,triple_offsetm_upper_anglep_upper_flarep
+sr_tr05_new,9,-0.00235224,-0.28876,4.65250,0.00208729,0.00154884,nm_sr_tr05_new_3
+sr_tr05_new,10,-0.00435224,-0.28876,4.65250,0.00183729,0.00129884,nm_sr_tr05_new_1
