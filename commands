@@ -33,3 +33,13 @@ python3 scripts/tcpc_collect_points.py \
   --run-tag extra_points_nelder_mead_sr_tr05_new \
   --job-name tcpc-extra-nm-sr-tr05-new \
   --time 24:00:00 --cpus 1 --mem 4G
+
+6.
+python3 scripts/tcpc_collect_points.py \
+  --config configs/tcpc/nm_tcpc.py \
+  --points-csv configs/tcpc/points/extra_points_nelder_mead_sr_tr025_ic.csv \
+  --csv data/junction_tcpc_logs/merged/extra_points_nelder_mead_sr_tr025_ic.csv \
+  --algorithm-label extra_points_nelder_mead_sr_tr025_ic \
+  --run-tag extra_points_nelder_mead_sr_tr025_ic \
+  --job-name tcpc-extra-nm-sr-tr025-ic \
+  --time 24:00:00 --cpus 1 --mem 4G
