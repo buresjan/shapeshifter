@@ -54,3 +54,36 @@ python3 scripts/tcpc_collect_points.py \
   --job-name tcpc-extra-mads-tke-axdiff-0p5pct-p1 \
   --time 30:00:00 --cpus 1 --mem 8G \
   --solver-cpus 8 --solver-gpus 1 --solver-mem 16G --solver-time 24:00:00
+
+8.
+python3 scripts/tcpc_collect_points.py \
+  --config /home/bures/optiview/tcpc_sr_axial_diff_mads_sr/mads_sr_tcpc_res5_axdiff_config.py \
+  --points-csv /home/bures/optiview/tcpc_sr_axial_diff_mads_sr/points_axdiff0p1pct_mads_sr_tcpc.csv \
+  --csv data/junction_tcpc_logs/merged/extra_points_mads_sr_axdiff0p1pct_res5.csv \
+  --algorithm-label extra_points_mads_sr_axdiff0p1pct_res5 \
+  --run-tag mads_sr_axdiff0p1pct_res5 \
+  --job-name tcpc-extra-mads-sr-axdiff0p1pct-res5 \
+  --time 30:00:00 --cpus 1 --mem 4G \
+  --solver-cpus 4 --solver-gpus 1 --solver-mem 16G --solver-time 24:00:00
+
+9a.
+python3 scripts/tcpc_collect_points.py \
+  --config configs/tcpc/nm_tcpc.py \
+  --points-csv configs/tcpc/points/extra_points_nm_sr_axdiff_0p1pct_point1.csv \
+  --csv data/junction_tcpc_logs/merged/extra_points_nm_sr_axdiff_0p1pct_point1.csv \
+  --algorithm-label extra_points_nm_sr_axdiff_0p1pct_point1 \
+  --run-tag extra_points_nm_sr_axdiff_0p1pct_point1 \
+  --job-name tcpc-extra-nm-sr-axdiff-0p1pct-p1 \
+  --time 30:00:00 --cpus 1 --mem 4G \
+  --solver-cpus 8 --solver-gpus 1 --solver-mem 16G --solver-time 24:00:00
+
+9.
+python3 scripts/tcpc_collect_points.py \
+  --config configs/tcpc/mads_tcpc.py \
+  --points-csv configs/tcpc/points/extra_points_mads_sr_axdiff_0p1pct_point1.csv \
+  --csv data/junction_tcpc_logs/merged/extra_points_mads_sr_axdiff_0p1pct_point1.csv \
+  --algorithm-label extra_points_mads_sr_axdiff_0p1pct_point1 \
+  --run-tag extra_points_mads_sr_axdiff_0p1pct_point1 \
+  --job-name tcpc-extra-mads-sr-axdiff-0p1pct-p1 \
+  --time 30:00:00 --cpus 1 --mem 8G \
+  --solver-cpus 8 --solver-gpus 1 --solver-mem 16G --solver-time 24:00:00
