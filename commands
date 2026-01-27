@@ -87,3 +87,14 @@ python3 scripts/tcpc_collect_points.py \
   --job-name tcpc-extra-mads-sr-axdiff-0p1pct-p1 \
   --time 30:00:00 --cpus 1 --mem 8G \
   --solver-cpus 8 --solver-gpus 1 --solver-mem 16G --solver-time 24:00:00
+
+10.
+python3 scripts/tcpc_collect_points.py \
+  --config configs/tcpc/nm_tke.py \
+  --points-csv configs/tcpc/points/extra_points_nm_tke_axdiff_0p1pct_point1.csv \
+  --csv data/junction_tcpc_logs/merged/extra_points_nm_tke_axdiff_0p1pct_point1.csv \
+  --algorithm-label extra_points_nm_tke_axdiff_0p1pct_point1 \
+  --run-tag extra_points_nm_tke_axdiff_0p1pct_point1 \
+  --job-name tcpc-extra-nm-tke-axdiff-0p1pct-p1 \
+  --time 36:00:00 --cpus 1 --mem 8G \
+  --solver-cpus 8 --solver-gpus 1 --solver-mem 16G --solver-time 24:00:00
