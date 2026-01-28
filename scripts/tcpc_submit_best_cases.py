@@ -42,10 +42,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--resolution", type=int, default=5, help="Solver resolution.")
     parser.add_argument("--processes", type=int, default=1, help="Meshgen voxel processes.")
     parser.add_argument("--mem", default="16G", help="Slurm memory request.")
+    parser.add_argument(
+        "--gpu-mem",
+        help="Requested GPU memory (for legend only; does not affect Slurm allocation).",
+    )
     parser.add_argument("--gpus", type=int, default=1, help="Slurm GPU count.")
     parser.add_argument("--cpus", type=int, default=4, help="Slurm CPUs per task.")
     parser.add_argument("--walltime", default="24:00:00", help="Slurm walltime.")
     parser.add_argument("--partition", help="Slurm partition.")
+    parser.add_argument(
+        "--constraint",
+        help="Slurm constraint (e.g. GPU type).",
+    )
+    parser.add_argument(
+        "--gres",
+        help="Slurm GRES override (e.g. gpu:a100:1).",
+    )
     parser.add_argument(
         "--job-name-prefix",
         default="tcpc-best",
@@ -137,6 +149,8 @@ def _write_sbatch(
     filename: str,
     data_root: Path,
     partition: str | None,
+    constraint: str | None,
+    gres: str | None,
     gpus: int | None,
     cpus: int | None,
     mem: str | None,
@@ -153,6 +167,10 @@ def _write_sbatch(
     ]
     if partition:
         lines.append(f"#SBATCH --partition={partition}")
+    if constraint:
+        lines.append(f"#SBATCH --constraint={constraint}")
+    if gres:
+        lines.append(f"#SBATCH --gres={gres}")
     if gpus is not None:
         lines.append(f"#SBATCH --gpus={gpus}")
     if cpus is not None:
@@ -280,7 +298,10 @@ def main() -> int:
         "cpus",
         "gpus",
         "mem",
+        "gpu_mem",
         "partition",
+        "constraint",
+        "gres",
         "submitted_at",
     ]
 
@@ -330,6 +351,8 @@ def main() -> int:
             filename=case_basename,
             data_root=data_root,
             partition=args.partition,
+            constraint=args.constraint,
+            gres=args.gres,
             gpus=args.gpus,
             cpus=args.cpus,
             mem=args.mem,
@@ -369,7 +392,10 @@ def main() -> int:
             "cpus": args.cpus,
             "gpus": args.gpus,
             "mem": args.mem,
+            "gpu_mem": args.gpu_mem or "",
             "partition": args.partition or "",
+            "constraint": args.constraint or "",
+            "gres": args.gres or "",
             "submitted_at": datetime.now().isoformat(timespec="seconds"),
         }
         _append_legend_row(legend_path, fieldnames, row)

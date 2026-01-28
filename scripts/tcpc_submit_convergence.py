@@ -59,8 +59,14 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--walltime", default="168:00:00", help="Slurm walltime.")
     parser.add_argument("--gpus", type=int, help="Slurm GPU count.")
+    parser.add_argument(
+        "--gpu-mem",
+        help="Requested GPU memory (for legend only; does not affect Slurm allocation).",
+    )
     parser.add_argument("--processes", type=int, default=1, help="Meshgen voxel processes.")
     parser.add_argument("--partition", help="Slurm partition.")
+    parser.add_argument("--constraint", help="Slurm constraint (e.g. GPU type).")
+    parser.add_argument("--gres", help="Slurm GRES override (e.g. gpu:a100:1).")
     parser.add_argument(
         "--job-name-prefix",
         default="tcpc-conv",
@@ -81,8 +87,20 @@ def _parse_args() -> argparse.Namespace:
         help="Override memory mapping, e.g. '3=8G,4=8G,5=16G'.",
     )
     parser.add_argument(
+        "--gpu-mem-by-resolution",
+        help="Override GPU memory mapping for legend, e.g. '7=12G,8=24G'.",
+    )
+    parser.add_argument(
         "--cpus-by-resolution",
         help="Override CPU mapping, e.g. '3=4,4=4,5=4'.",
+    )
+    parser.add_argument(
+        "--constraint-by-resolution",
+        help="Override constraint mapping, e.g. '7=rtx4090,8=a100'.",
+    )
+    parser.add_argument(
+        "--gres-by-resolution",
+        help="Override GRES mapping, e.g. '7=gpu:rtx4090:1,8=gpu:a100:1'.",
     )
     parser.add_argument(
         "--dry-run",
@@ -169,10 +187,34 @@ def main() -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
+    gpu_mem_by_res: dict[int, object] = {}
+    if args.gpu_mem_by_resolution:
+        try:
+            gpu_mem_by_res = _parse_mapping(args.gpu_mem_by_resolution, value_type=str)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
     cpus_by_res = dict(DEFAULT_CPUS_BY_RES)
     if args.cpus_by_resolution:
         try:
             cpus_by_res.update(_parse_mapping(args.cpus_by_resolution, value_type=int))
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    constraint_by_res: dict[int, object] = {}
+    if args.constraint_by_resolution:
+        try:
+            constraint_by_res = _parse_mapping(args.constraint_by_resolution, value_type=str)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    gres_by_res: dict[int, object] = {}
+    if args.gres_by_resolution:
+        try:
+            gres_by_res = _parse_mapping(args.gres_by_resolution, value_type=str)
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -203,6 +245,9 @@ def main() -> int:
     for res in resolutions:
         mem = mem_by_res[res]
         cpus = cpus_by_res[res]
+        gpu_mem = gpu_mem_by_res.get(res, args.gpu_mem)
+        constraint = constraint_by_res.get(res, args.constraint)
+        gres = gres_by_res.get(res, args.gres)
         job_prefix = f"{args.job_name_prefix}-r{res}"
         case_prefix = f"{args.case_prefix}-r{res}"
 
@@ -231,14 +276,27 @@ def main() -> int:
             "--processes",
             str(args.processes),
         ]
+        if gpu_mem is not None:
+            cmd.extend(["--gpu-mem", str(gpu_mem)])
         if args.partition:
             cmd.extend(["--partition", str(args.partition)])
+        if constraint is not None:
+            cmd.extend(["--constraint", str(constraint)])
+        if gres is not None:
+            cmd.extend(["--gres", str(gres)])
         if args.gpus is not None:
             cmd.extend(["--gpus", str(args.gpus)])
         if args.dry_run:
             cmd.append("--dry-run")
 
-        print(f"[convergence] resolution {res}: mem={mem} cpus={cpus}", flush=True)
+        msg = f"[convergence] resolution {res}: mem={mem} cpus={cpus}"
+        if gpu_mem is not None:
+            msg += f" gpu_mem={gpu_mem}"
+        if constraint is not None:
+            msg += f" constraint={constraint}"
+        if gres is not None:
+            msg += f" gres={gres}"
+        print(msg, flush=True)
         result = subprocess.run(cmd, cwd=PROJECT_ROOT, check=False)
         if result.returncode != 0:
             return result.returncode
