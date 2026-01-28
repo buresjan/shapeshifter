@@ -113,6 +113,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--mem", help="Slurm memory request override.")
     parser.add_argument("--walltime", help="Slurm walltime override.")
     parser.add_argument(
+        "--z-voxels",
+        type=int,
+        default=300,
+        help="Override z_voxels for all cases.",
+    )
+    parser.add_argument(
+        "--sim-resolution",
+        type=int,
+        default=300,
+        help="Override sim_resolution for all cases.",
+    )
+    parser.add_argument(
         "--runs-root",
         type=Path,
         help="Override runs_root for all cases.",
@@ -461,11 +473,11 @@ def main() -> int:
             )
             return 1
 
-        z_voxels = int(objective_cfg.get("z_voxels", 0))
+        z_voxels = int(args.z_voxels)
         if z_voxels <= 0:
             print(f"error: invalid z_voxels for {case.label}: {z_voxels}", file=sys.stderr)
             return 1
-        sim_resolution = int(objective_cfg.get("sim_resolution", z_voxels))
+        sim_resolution = int(args.sim_resolution)
         keep_temp_files = bool(objective_cfg.get("keep_temp_files", False))
 
         partition = args.partition if args.partition is not None else slurm_cfg.get("partition")
