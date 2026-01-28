@@ -230,13 +230,19 @@ fi
 
 
 def _submit_job(sbatch_path: Path) -> str:
-    proc = subprocess.run(
-        ["sbatch", "--parsable", sbatch_path.name],
-        cwd=sbatch_path.parent,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        proc = subprocess.run(
+            ["sbatch", "--parsable", sbatch_path.name],
+            cwd=sbatch_path.parent,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        stdout = (exc.stdout or "").strip()
+        detail = stderr or stdout or "sbatch returned a non-zero exit status"
+        raise RuntimeError(detail) from exc
     job_id = proc.stdout.strip().split(";", 1)[0]
     if not job_id:
         raise RuntimeError("sbatch did not return a job id")
@@ -344,6 +350,7 @@ def main() -> int:
         stage_geometry(files, data_root)
 
         job_name = f"{args.job_name_prefix}-{slug}"
+        effective_gpus = None if args.gres else args.gpus
         sbatch_path = _write_sbatch(
             run_dir=run_dir,
             solver_binary=binary,
@@ -353,7 +360,7 @@ def main() -> int:
             partition=args.partition,
             constraint=args.constraint,
             gres=args.gres,
-            gpus=args.gpus,
+            gpus=effective_gpus,
             cpus=args.cpus,
             mem=args.mem,
             walltime=args.walltime,
@@ -390,7 +397,7 @@ def main() -> int:
             "submission_status": status,
             "walltime": args.walltime,
             "cpus": args.cpus,
-            "gpus": args.gpus,
+            "gpus": effective_gpus,
             "mem": args.mem,
             "gpu_mem": args.gpu_mem or "",
             "partition": args.partition or "",
