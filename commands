@@ -116,3 +116,10 @@ python3 scripts/tcpc_collect_points.py \
   --job-name tcpc-extra-nm-tke-axdiff-0p1pct-p2 \
   --time 36:00:00 --cpus 1 --mem 8G \
   --solver-cpus 8 --solver-gpus 1 --solver-mem 60G --solver-time 24:00:00
+13.
+python3 scripts/tcpc_submit_best_cases.py \
+  --points-csv configs/tcpc/points/best_nm_tke_point.csv \
+  --binary submodules/tnl-lbm/build/sim_NSE/sim_tcpc_combined \
+  --case-prefix best_nm_tke \
+  --job-name-prefix best-nm-tke \
+  --walltime 24:00:00 --cpus 4 --gpus 1 --mem 16G
